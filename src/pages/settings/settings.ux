@@ -1,0 +1,933 @@
+<import name="input-method" src="../../components/InputMethod/InputMethod.ux"></import>
+
+<template>
+  <div class="page">
+    <text class="clock">{{ clock }}</text>
+    <text class="title">Настройки</text>
+
+    <div class="list-wrapper">
+      <scroll
+        class="list"
+        id="settingsList"
+        scroll-y="true"
+        @scroll="onListScroll"
+        @scrolltop="onListTop"
+        @scrollbottom="onListBottom">
+        <div class="entry" for="{{ items }}">
+          <text if="{{ $item.kind === 'section' }}" class="section">{{ $item.label }}</text>
+          <div if="{{ $item.kind === 'row' }}" class="item" onclick="onItemClick($idx)">
+            <div class="card">
+              <div class="card-main">
+                <text if="{{ $item.id === 'auto' }}" class="card-label">Автоудале</text>
+                <text if="{{ $item.id === 'auto' }}" class="card-label">ние</text>
+                <text if="{{ $item.id !== 'auto' }}" class="card-label">{{ $item.label }}</text>
+                <text if="{{ $item.id === 'auto' }}" class="card-sub">
+                  {{ autoDelete ? 'старше 3дн' : 'выключено' }}
+                </text>
+                <text if="{{ $item.id !== 'auto' && $item.value }}" class="card-value">{{ $item.value }}</text>
+              </div>
+              <div
+                if="{{ $item.id === 'auto' }}"
+                class="switch {{ autoDelete ? 'switch-on' : 'switch-off' }}">
+                <div class="switch-knob"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="item-pad"></div>
+      </scroll>
+      <image if="{{ showTopFade }}" class="fade fade-top" src="/common/images/hd.png"></image>
+      <image if="{{ showBottomFade }}" class="fade fade-bottom" src="/common/images/hd-bottom.png"></image>
+    </div>
+
+    <div if="{{ clearShow }}" class="mask">
+      <div class="dialog">
+        <div class="dialog-btn dialog-btn-cancel" onclick="cancelClear">
+          <image class="dialog-btn-icon" src="/common/images/arrow.png"></image>
+        </div>
+        <text class="dialog-title">Удалить все диалоги?</text>
+        <text class="dialog-sub">Вся история сообщений будет стёрта</text>
+        <div class="dialog-btn dialog-btn-delete" onclick="confirmClear">
+          <image class="dialog-btn-icon dialog-btn-icon-delete" src="/common/images/trash.png"></image>
+        </div>
+      </div>
+    </div>
+
+    <div if="{{ aboutShow }}" class="mask">
+      <div class="dialog">
+        <image class="about-logo" src="/common/logo.png"></image>
+        <text class="dialog-title">DeepSeekB</text>
+        <text class="about-version">Версия {{ versionName }}</text>
+        <text class="about-text">Клиент DeepSeek для смарт-браслетов Xiaomi</text>
+        <div class="dialog-btn dialog-btn-wide" onclick="closeAbout">
+          <text class="dialog-btn-text">Закрыть</text>
+        </div>
+      </div>
+    </div>
+
+    <div if="{{ faqShow }}" class="mask">
+      <div class="faq-dialog">
+        <scroll class="faq-scroll" scroll-y="true">
+          <text class="faq-title">FAQ</text>
+          <text class="faq-text">Для Mi Band 9, 10 и 11: поставьте Режим сети на «Авто» и включите мост FetchBridge на телефоне.</text>
+          <text class="faq-text">Где взять API-ключ: зарегистрируйтесь на ://deepseek.com, создайте ключ (начинается с sk-...) и введите его в настройках.</text>
+          <text class="faq-text">Думающий режим (R1): включает модель deepseek-reasoner для сложных задач по математике и физике.</text>
+          <text class="faq-text">Как подключить мост: 1. Установите AstroBox NG на Android. 2. Подключите браслет. 3. В разделе «Плагины» установите и включите FetchBridge. 4. Нажмите «Мост через телефон» в настройках для проверки.</text>
+          <div class="faq-btn" onclick="closeFaq">
+            <text class="faq-btn-text">Закрыть</text>
+          </div>
+          <div class="pad-faq"></div>
+        </scroll>
+      </div>
+    </div>
+
+    <div if="{{ diagShow }}" class="mask">
+      <div class="diag-dialog">
+        <scroll class="diag-scroll" scroll-y="true">
+          <text class="diag-title">Проверка API</text>
+          <text class="diag-text">{{ diagText }}</text>
+          <div class="diag-pad"></div>
+        </scroll>
+        <div class="diag-btn" onclick="closeDiag">
+          <text class="diag-btn-text">Закрыть</text>
+        </div>
+      </div>
+    </div>
+
+    <input-method
+      if="{{ keyboardVisible }}"
+      id="im"
+      keyboard-type="{{ keyboardType }}"
+      initial-text="{{ keyDraft }}"
+      @input="onKeyInput"
+      @delete="onKeyDelete"
+      @enter="onKeyEnter"
+      @hide="onKeyboardHide">
+    </input-method>
+  </div>
+</template>
+
+<script>
+import app from "@system.app"
+
+import {
+  KEY_API_KEY,
+  KEY_AUTO_DELETE,
+  KEY_KEYBOARD_MODE,
+  KEY_MODEL,
+  KEY_NETWORK_MODE,
+  KEY_THINKING_MODE,
+  AUTO_DELETE_DAYS,
+  getValue,
+  setValue,
+  removeValue,
+  cleanupInactiveChats,
+  clearAllChats
+} from "../../common/app-store.js"
+import { NETWORK_MODES, apiDiagnose, DEFAULT_MODEL, REASONER_MODEL } from "../../common/deepseek-api.js"
+import { bridgeSupported, bridgeDiagnose, bridgePing, bridgeReady } from "../../common/bridge.js"
+
+export default {
+  private: {
+    clock: "",
+    items: [],
+    apiKey: "",
+    autoDelete: false,
+    versionName: "1.0.0",
+    clearShow: false,
+    aboutShow: false,
+    faqShow: false,
+    diagShow: false,
+    diagText: "",
+    keyboardVisible: false,
+    keyboardType: "QWERTY",
+    keyDraft: "",
+    timer: null,
+    networkMode: "auto",
+    bridgeStatus: "не проверен",
+    keySaveFailed: false,
+    clearNote: "",
+    noteTimer: null,
+    showTopFade: false,
+    showBottomFade: true,
+    listOffset: 0,
+    listAtBottom: false,
+    listHasOverflow: true,
+    thinkingMode: "off"
+  },
+
+  onInit() {
+    this.tick()
+    this.timer = setInterval(() => {
+      this.tick()
+    }, 20000)
+    this.loadAppInfo()
+    this.loadSettings()
+  },
+
+  onDestroy() {
+    if (this.timer) {
+      clearInterval(this.timer)
+      this.timer = null
+    }
+    if (this.noteTimer) {
+      clearTimeout(this.noteTimer)
+      this.noteTimer = null
+    }
+  },
+
+  tick() {
+    const now = new Date()
+    const h = now.getHours()
+    const m = now.getMinutes()
+    this.clock = (h < 10 ? "0" + h : "" + h) + ":" + (m < 10 ? "0" + m : "" + m)
+  },
+
+  loadAppInfo() {
+    try {
+      const info = app.getInfo()
+      if (info && info.versionName) {
+        this.versionName = String(info.versionName)
+      }
+    } catch (e) {}
+    this.refreshItems()
+  },
+
+  loadSettings() {
+    getValue(KEY_API_KEY, "", (value) => {
+      this.apiKey = value || ""
+      this.refreshItems()
+    })
+    getValue(KEY_AUTO_DELETE, "off", (value) => {
+      this.autoDelete = value === "on"
+      this.refreshItems()
+    })
+    getValue(KEY_NETWORK_MODE, "auto", (value) => {
+      this.networkMode = value || "auto"
+      this.refreshBridge()
+      this.refreshItems()
+    })
+    getValue(KEY_THINKING_MODE, "off", (value) => {
+      this.thinkingMode = value || "off"
+      this.refreshItems()
+    })
+  },
+
+  onShow() {
+    this.tick()
+    this.loadSettings()
+    this.listAtBottom = false
+    this.listOffset = 0
+    this.showTopFade = false
+    this.syncBottomFade()
+  },
+
+  onListScroll(e) {
+    var src = e && e.detail ? e.detail : e
+    var dy = src && typeof src.scrollY === "number" ? src.scrollY : 0
+    this.listOffset += dy
+    if (this.listOffset < 0) {
+      this.listOffset = 0
+    }
+    if (this.listOffset > 0) {
+      if (!this.showTopFade) this.showTopFade = true
+    } else {
+      if (this.showTopFade) this.showTopFade = false
+    }
+    if (dy < 0 && this.listAtBottom) {
+      this.listAtBottom = false
+      this.syncBottomFade()
+    }
+  },
+
+  onListTop() {
+    this.listOffset = 0
+    this.listAtBottom = false
+    if (this.showTopFade) this.showTopFade = false
+    this.syncBottomFade()
+  },
+
+  onListBottom() {
+    this.listAtBottom = true
+    if (this.listHasOverflow && !this.showTopFade) this.showTopFade = true
+    this.syncBottomFade()
+  },
+
+  syncBottomFade() {
+    var show = this.listHasOverflow && !this.listAtBottom
+    if (show !== this.showBottomFade) {
+      this.showBottomFade = show
+    }
+  },
+
+  getThinkingLabel() {
+    return this.thinkingMode === "on" ? "R1 (Вкл)" : "V3 (Выкл)"
+  },
+
+  refreshItems() {
+    let apiValue = "Не задан"
+    if (this.keySaveFailed) {
+      apiValue = "не сохранён"
+    } else if (this.apiKey) {
+      apiValue = this.apiKey.length > 8 ? "…" + this.apiKey.slice(-4) : "Задан"
+    }
+    const net = this.networkMode || "auto"
+    let netLabel = "Авто"
+    for (let i = 0; i < NETWORK_MODES.length; i++) {
+      const m = NETWORK_MODES.slice(i, i + 1).pop()
+      if (m && m.id === net) {
+        netLabel = m.title
+        break
+      }
+    }
+    this.items = [
+      { kind: "section", label: "API" },
+      { kind: "row", id: "api", label: "API-ключ", value: apiValue },
+      { kind: "row", id: "check", label: "Проверить API", value: "" },
+      { kind: "row", id: "thinking", label: "Думающий R1", value: this.getThinkingLabel() },
+      { kind: "section", label: "Сеть" },
+      { kind: "row", id: "net", label: "Режим сети", value: netLabel },
+      { kind: "row", id: "bridge", label: "Мост через телефон", value: this.bridgeStatus },
+      { kind: "section", label: "Чаты" },
+      { kind: "row", id: "auto", label: "Автоудаление", value: "" },
+      { kind: "row", id: "clear", label: "Очистить диалоги", value: this.clearNote || "Удалить" },
+      { kind: "section", label: "Инфо" },
+      { kind: "row", id: "about", label: "О приложении", value: this.versionName },
+      { kind: "row", id: "faq", label: "FAQ", value: "" }
+    ]
+    let height = 16
+    for (let j = 0; j < this.items.length; j++) {
+      const it = this.items.slice(j, j + 1).pop()
+      height += it && it.kind === "section" ? 30 : 84
+    }
+    this.listHasOverflow = height > 406
+    if (this.listOffset > 0) {
+      this.showTopFade = true
+    } else {this.showTopFade = false
+}
+this.syncBottomFade()
+},
+onItemClick($idx) {
+const item = this.items.slice($idx, $idx + 1).pop()
+if (!item || item.kind !== "row") {
+return
+}
+if (item.id === "api") {
+this.openApiKey()
+} else if (item.id === "check") {
+this.checkApi()
+} else if (item.id === "thinking") {
+this.cycleThinking()
+} else if (item.id === "net") {
+this.cycleNetwork()
+} else if (item.id === "bridge") {
+this.checkBridge()
+} else if (item.id === "auto") {
+this.toggleAutoDelete()
+} else if (item.id === "clear") {
+this.clearShow = true
+} else if (item.id === "about") {
+this.aboutShow = true
+} else if (item.id === "faq") {
+this.faqShow = true
+}
+},  cycleThinking() {
+    this.thinkingMode = this.thinkingMode === "on" ? "off" : "on"
+    setValue(KEY_THINKING_MODE, this.thinkingMode)
+    setValue(KEY_MODEL, this.thinkingMode === "on" ? REASONER_MODEL : DEFAULT_MODEL)
+    this.refreshItems()
+  },
+
+  cycleNetwork() {
+    const order = ["auto", "bridge", "direct", "doh", "relay"]
+    let cur = order.indexOf(this.networkMode)
+    if (cur < 0) cur = 0
+    const nextIndex = (cur + 1) % order.length
+    this.networkMode = order.slice(nextIndex, nextIndex + 1).pop()
+    setValue(KEY_NETWORK_MODE, this.networkMode)
+    this.refreshBridge()
+    this.refreshItems()
+  },
+
+  checkApi() {
+    if (!this.apiKey) {
+      this.diagText = "Сначала задайте API-ключ в пункте выше"
+      this.diagShow = true
+      return
+    }
+    this.diagText = "Проверяю..."
+    this.diagShow = true
+    const self = this
+    apiDiagnose({
+      apiKey: this.apiKey,
+      timeout: 15000
+    })
+      .then(function (res) {
+        let text = res.ok ? (res.text || "Ключ работает") : (res.text || "Ошибка")
+        text = text + "\n\nHTTP " + (res.status || "-") + " · " + (res.route || "-")
+        if (res.hint) {
+          text = text + "\n\n" + res.hint
+        }
+        self.diagText = text
+      })
+      .catch(function (err) {
+        self.diagText = "Ошибка: " + ((err && err.message) || "неизвестно")
+      })
+  },
+
+  closeDiag() {
+    this.diagShow = false
+  },
+
+  refreshBridge() {
+    const mode = this.networkMode || "auto"
+    if (mode !== "auto" && mode !== "bridge") {
+      this.bridgeStatus = "не используется"
+      this.refreshItems()
+      return
+    }
+    if (!bridgeSupported()) {
+      this.bridgeStatus = "не поддерживается"
+      this.refreshItems()
+      return
+    }
+    let ready = false
+    try {
+      ready = bridgeReady()
+    } catch (e) {}
+    this.bridgeStatus = ready ? "готов к работе" : "не проверен"
+    this.refreshItems()
+  },
+
+  checkBridge() {
+    if (!bridgeSupported()) {
+      this.bridgeStatus = "не поддерживается"
+      this.refreshItems()
+      return
+    }
+    this.bridgeStatus = "поиск..."
+    this.refreshItems()
+    try {
+      bridgePing()
+    } catch (e) {}
+    const self = this
+    setTimeout(function () {
+      try {
+        if (bridgeReady()) {
+          self.bridgeStatus = "готов к работе"
+          self.refreshItems()
+          return
+        }
+      } catch (e) {}
+      bridgeDiagnose(8000)
+        .then(function (res) {
+          if (res && (res.status === 0 || res.status === 200 || res.status === 201)) {
+            self.bridgeStatus = "готов к работе"
+          } else if (res && res.status === 1001) {
+            self.bridgeStatus = "установите FetchBridge"
+          } else if (typeof res.status === "number" && res.status > 0 && res.status !== 1001) {
+            self.bridgeStatus = "готов к работе"
+          } else if (bridgeReady()) {
+            self.bridgeStatus = "готов к работе"
+          } else {
+            self.bridgeStatus = "нет соединения"
+          }
+          self.refreshItems()
+        })
+        .catch(function () {
+          self.bridgeStatus = bridgeReady() ? "готов к работе" : "ошибка"
+          self.refreshItems()
+        })
+    }, 700)
+  },
+
+  openApiKey() {
+    getValue(KEY_KEYBOARD_MODE, "QWERTY", (mode) => {
+      this.keyboardType = mode === "T9" || mode === "t9" ? "T9" : "QWERTY"
+      this.keyDraft = this.apiKey
+      this.keyboardVisible = true
+    })
+  },
+
+  onKeyInput(e) {
+    const val = e && e.detail ? e.detail.value : (e && e.value ? e.value : "")
+    if (val) {
+      this.keyDraft = this.keyDraft + val
+    }
+  },
+
+  onKeyDelete() {
+    if (this.keyDraft.length > 0) {
+      this.keyDraft = this.keyDraft.substring(0, this.keyDraft.length - 1)
+    }
+  },
+
+  onKeyboardHide() {
+    this.keyboardVisible = false
+    this.keyDraft = ""
+  },
+
+  onKeyEnter(e) {
+    let raw = this.keyDraft
+    if (e && e.detail && typeof e.detail.value === "string") {
+      raw = e.detail.value
+    } else if (e && typeof e.value === "string") {
+      raw = e.value
+    }
+    const key = raw.trim()
+    this.keyboardVisible = false
+    this.keyDraft = ""
+
+    if (!key) {
+      removeValue(KEY_API_KEY, () => {
+        this.apiKey = ""
+        this.keySaveFailed = false
+        this.refreshItems()
+      })
+      return
+    }
+
+    setValue(KEY_API_KEY, key, (ok) => {
+      if (ok) {
+        this.apiKey = key
+        this.keySaveFailed = false
+      } else {
+        this.keySaveFailed = true
+      }
+      this.refreshItems()
+    })
+  },
+
+  toggleAutoDelete() {
+    const next = !this.autoDelete
+    this.autoDelete = next
+    setValue(KEY_AUTO_DELETE, next ? "on" : "off")
+    this.refreshItems()
+    if (next) {
+      cleanupInactiveChats(function () {}, AUTO_DELETE_DAYS)
+    }
+  },
+
+  cancelClear() {
+    this.clearShow = false
+  },
+
+  confirmClear() {
+    this.clearShow = false
+    const self = this
+    clearAllChats((removed) => {
+      self.setNote(removed > 0 ? "удалено " + removed : "пусто")
+    })
+  },
+
+  setNote(text) {
+    this.clearNote = text
+    this.refreshItems()
+    if (this.noteTimer) {
+      clearTimeout(this.noteTimer)
+    }
+    const self = this
+    this.noteTimer = setTimeout(function () {
+      self.noteTimer = null
+      self.clearNote = ""
+      self.refreshItems()
+    }, 2500)
+  },
+
+  closeAbout() {
+    this.aboutShow = false
+  },
+
+  closeFaq() {
+    this.faqShow = false
+  }
+}
+</script>
+
+<style>
+.page {
+  width: 192px;
+  height: 490px;
+  background-color: #000000;
+  flex-direction: column;
+  align-items: center;
+}
+
+.clock {
+  position: absolute;
+  left: 0px;
+  top: 26px;
+  width: 192px;
+  text-align: center;
+  font-size: 17px;
+  font-weight: bold;
+  line-height: 24px;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.title {
+  position: absolute;
+  left: 0px;
+  top: 50px;
+  width: 192px;
+  text-align: center;
+  font-size: 22px;
+  font-weight: bold;
+  line-height: 28px;
+  color: #ffffff;
+  lines: 1;
+  text-overflow: ellipsis;
+}
+
+.list-wrapper {
+  position: absolute;
+  left: 0px;
+  top: 84px;
+  width: 192px;
+  height: 406px;
+}
+
+.list {
+  width: 192px;
+  height: 406px;
+  flex-direction: column;
+}
+
+.section {
+  width: 192px;
+  height: 30px;
+  padding-left: 26px;
+  font-size: 13px;
+  font-weight: bold;
+  line-height: 30px;
+  color: rgba(255, 255, 255, 0.45);
+  lines: 1;
+  text-overflow: ellipsis;
+}
+
+.item {
+  width: 192px;
+  height: 84px;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.item-pad {
+  width: 192px;
+  height: 16px;
+}
+
+.fade {
+  position: absolute;
+  left: 0px;
+  width: 192px;
+  height: 34px;
+  pointer-events: none;
+}
+
+.fade-top {
+  top: 0px;
+}
+
+.fade-bottom {
+  bottom: 0px;
+}
+
+.card {
+  width: 168px;
+  height: 72px;
+  margin-left: 12px;
+  padding-left: 14px;
+  padding-right: 14px;
+  background-color: #262626;
+  border-radius: 20px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.card-main {
+  flex: 1;
+  height: 100%;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.card-label {
+  width: 100%;
+  font-size: 15px;
+  line-height: 19px;
+  color: rgba(255, 255, 255, 0.85);
+  lines: 2;
+}
+
+.card-sub {
+  width: 100%;
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 17px;
+  color: rgba(255, 255, 255, 0.45);
+  lines: 1;
+}
+
+.card-value {
+  width: 100%;
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 17px;
+  font-weight: bold;
+  color: #4d6bfe;
+  text-align: left;
+  lines: 1;
+}
+
+.switch {
+  width: 52px;
+  height: 30px;
+  border-radius: 15px;
+  padding-left: 3px;
+  padding-right: 3px;
+  align-items: center;
+}
+
+.switch-on {
+  background-color: #4d6bfe;
+  justify-content: flex-end;
+}
+
+.switch-off {
+  background-color: #3a3a3a;
+  justify-content: flex-start;
+}
+
+.switch-knob {
+  width: 24px;
+  height: 24px;
+  border-radius: 12px;
+  background-color: #ffffff;
+}
+
+.mask {
+  position: absolute;
+  left: 0px;
+  top: 0px;
+  width: 192px;
+  height: 490px;
+  background-color: rgba(0, 0, 0, 0.78);
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.dialog {
+  width: 168px;
+  padding: 16px 12px;
+  background-color: #262626;
+  border-radius: 22px;
+  flex-direction: column;
+  align-items: center;
+}
+
+.dialog-title {
+  width: 144px;
+  margin-top: 12px;
+  text-align: center;
+  font-size: 18px;
+  font-weight: bold;
+  line-height: 24px;
+  color: #ffffff;
+}
+
+.dialog-sub {
+  width: 144px;
+  margin-top: 6px;
+  text-align: center;
+  font-size: 14px;
+  line-height: 20px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.dialog-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 24px;
+  background-color: rgba(255, 255, 255, 0.05);
+  border-width: 2px;
+  border-style: solid;
+  border-color: rgba(255, 255, 255, 0.2);
+  align-items: center;
+  justify-content: center;
+}
+
+.dialog-btn-cancel {
+  border-color: rgba(77, 107, 254, 0.85);
+}
+
+.dialog-btn-delete {
+  margin-top: 14px;
+  border-color: rgba(255, 80, 80, 0.8);
+}
+
+.dialog-btn-icon {
+  width: 30px;
+  height: 30px;
+}
+
+.dialog-btn-icon-delete {
+  width: 34px;
+  height: 34px;
+}
+
+.dialog-btn-wide {
+  width: 110px;
+  height: 40px;
+  margin-top: 16px;
+  border-color: rgba(77, 107, 254, 0.85);
+}
+
+.dialog-btn-text {
+  font-size: 15px;
+  font-weight: bold;
+  color: #ffffff;
+  text-align: center;
+  lines: 1;
+}
+
+.about-logo {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+}
+
+.about-version {
+  width: 144px;
+  margin-top: 4px;
+  text-align: center;
+  font-size: 14px;
+  line-height: 20px;
+  color: #4d6bfe;
+  lines: 1;
+  text-overflow: ellipsis;
+}
+
+.about-text {
+  width: 144px;
+  margin-top: 8px;
+  text-align: center;
+  font-size: 14px;
+  line-height: 20px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.faq-dialog {
+  width: 168px;
+  height: 420px;
+  background-color: #262626;
+  border-radius: 22px;
+  flex-direction: column;
+  align-items: center;
+}
+
+.faq-scroll {
+  width: 168px;
+  height: 420px;
+  flex-direction: column;
+}
+
+.faq-title {
+  width: 144px;
+  margin-top: 14px;
+  margin-left: 12px;
+  text-align: center;
+  font-size: 18px;
+  font-weight: bold;
+  line-height: 24px;
+color: #ffffff;
+}
+.faq-text {
+width: 144px;
+margin-top: 10px;
+margin-left: 12px;
+font-size: 13px;
+line-height: 18px;
+color: rgba(255, 255, 255, 0.9);
+}
+.faq-btn {
+width: 110px;
+height: 40px;
+margin-top: 16px;
+margin-left: 29px;
+border-radius: 20px;
+background-color: rgba(255, 255, 255, 0.05);
+border-width: 2px;
+border-style: solid;
+border-color: rgba(77, 107, 254, 0.85);
+align-items: center;
+justify-content: center;
+}
+.faq-btn-text {
+font-size: 15px;
+font-weight: bold;
+color: #ffffff;
+text-align: center;
+}
+.pad-faq {
+width: 168px;
+height: 20px;
+}
+.diag-dialog {
+width: 176px;
+height: 296px;
+background-color: #262626;
+border-radius: 20px;
+flex-direction: column;
+align-items: center;
+}
+.diag-scroll {
+width: 176px;
+height: 236px;
+flex-direction: column;
+}
+.diag-title {
+width: 148px;
+margin-top: 12px;
+margin-left: 14px;
+text-align: center;
+font-size: 17px;
+font-weight: bold;
+line-height: 22px;
+color: #ffffff;
+}
+.diag-text {
+width: 148px;
+margin-top: 8px;
+margin-left: 14px;
+font-size: 13px;
+line-height: 18px;
+color: rgba(255, 255, 255, 0.9);
+word-break: break-all;
+}
+.diag-pad {
+width: 176px;
+height: 10px;
+}
+.diag-btn {
+width: 110px;
+height: 40px;
+margin-top: 8px;
+border-radius: 20px;
+background-color: rgba(255, 255, 255, 0.05);
+border-width: 2px;
+border-style: solid;
+border-color: rgba(77, 107, 254, 0.85);
+align-items: center;
+justify-content: center;
+}
+.diag-btn-text {
+font-size: 15px;
+font-weight: bold;
+color: #ffffff;
+text-align: center;
+lines: 1;
+}
