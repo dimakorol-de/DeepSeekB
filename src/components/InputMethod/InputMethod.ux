@@ -1,0 +1,576 @@
+<template>
+  <div class="im-page">
+    <div class="im-mask" onclick="hideKeyboard"></div>
+
+    <div class="im-panel">
+      <div class="im-top-btn im-lang" onclick="switchLang">
+        <text class="im-lang-t">{{ lang === 'ru' ? 'РУ' : 'EN' }}</text>
+      </div>
+
+      <div if="{{ t9mode }}" class="im-top-btn im-top-a" onclick="keyPress(' ')">
+        <image class="im-top-ico im-space-ico" src="/components/InputMethod/assets/arc/space.png"></image>
+      </div>
+      <div if="{{ !t9mode && mode === 'letters' }}" class="im-top-btn im-top-a" onclick="toggleShift">
+        <image if="{{ shift }}" class="im-top-ico" src="/components/InputMethod/assets/arc/bigA.png"></image>
+        <image if="{{ !shift }}" class="im-top-ico" src="/components/InputMethod/assets/arc/a.png"></image>
+      </div>
+      <div if="{{ !t9mode && mode === 'numbers' }}" class="im-top-btn im-top-a" onclick="toggleSymbols">
+        <text class="im-top-t">/?*</text>
+      </div>
+      <div if="{{ !t9mode && mode === 'symbols' }}" class="im-top-btn im-top-a" onclick="toggleNumbers">
+        <image class="im-top-ico" src="/components/InputMethod/assets/arc/123.png"></image>
+      </div>
+
+      <div class="im-top-btn im-top-mode" onclick="toggleMode">
+        <image if="{{ t9mode || mode !== 'letters' }}" class="im-top-ico" src="/components/InputMethod/assets/arc/a.png"></image>
+        <image if="{{ !t9mode && mode === 'letters' }}" class="im-top-ico" src="/components/InputMethod/assets/arc/123.png"></image>
+      </div>
+
+      <div class="im-top-btn im-top-del" onclick="deleteChar">
+        <image class="im-top-ico" src="/components/InputMethod/assets/arc/del.png"></image>
+      </div>
+
+      <image class="im-search" src="/components/InputMethod/assets/arc/search.png"></image>
+      <text class="im-draft {{ draft ? 'im-draft-full' : 'im-draft-empty' }}">{{ draft ? draft : 'Ввод' }}</text>
+      <div class="im-send" onclick="doEnter">
+        <image class="im-send-ico" src="/common/images/enter.png"></image>
+      </div>
+
+      <progress if="{{ !t9mode }}" class="im-arc" type="arc" percent="{{ arcPercent }}"></progress>
+
+      <scroll if="{{ !t9mode }}" class="im-keys" scroll-x="true" scroll-y="false" @scroll="onKeysScroll">
+        <div class="im-keys-col">
+          <div class="im-key-row im-key-row-0">
+            <div class="im-key" for="{{ row0 }}" onclick="keyPress($item)">
+              <text class="im-key-t">{{ $item }}</text>
+            </div>
+          </div>
+          <div class="im-key-row im-key-row-1">
+            <div class="im-key" for="{{ row1 }}" onclick="keyPress($item)">
+              <text class="im-key-t">{{ $item }}</text>
+            </div>
+          </div>
+          <div class="im-key-row im-key-row-2">
+            <div class="im-key" for="{{ row2 }}" onclick="keyPress($item)">
+              <text class="im-key-t">{{ $item }}</text>
+            </div>
+            <image class="im-key-space-img" src="/components/InputMethod/assets/arc/space.png" onclick="keyPress(' ')"></image>
+          </div>
+        </div>
+      </scroll>
+
+      <div if="{{ t9mode }}" class="im-t9-grid">
+        <div class="im-t9-key" for="{{ t9keys }}" onclick="t9Press($item.d)">
+          <text class="im-t9-num">{{ $item.d }}</text>
+          <text class="im-t9-sub">{{ $item.sub }}</text>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+import vibrator from "@system.vibrator"
+
+const EN_ROWS = [
+  ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
+  ["a", "s", "d", "f", "g", "h", "j", "k", "l"],
+  ["z", "x", "c", "v", "b", "n", "m"]
+]
+
+const RU_ROWS = [
+  ["й", "ц", "у", "к", "е", "н", "г", "ш", "щ", "з", "х"],
+  ["ъ", "ф", "ы", "в", "а", "п", "р", "о", "л", "д", "ж", "э"],
+  ["ё", "я", "ч", "с", "м", "и", "т", "ь", "б", "ю"]
+]
+
+const NUM_ROWS = [
+  ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
+  ["-", "/", ":", ";", "(", ")", "+", "=", "%", "_"],
+  [",", ".", "?", "!", "'", "*", "#", "&", "@", "~"]
+]
+
+const SYM_ROWS = [
+  ["[", "]", "{", "}", "<", ">", "|", "\\", "^", "`"],
+  ["$", "%", "&", "*", "+", "=", "~", "/", "?", "!"],
+  ["«", "»", "-", "_", ":", ";", ",", ".", "'", "="]
+]
+
+const T9_RU = {
+  "2": "абвг",
+  "3": "деёжз",
+  "4": "ийкл",
+  "5": "мноп",
+  "6": "рсту",
+  "7": "фхцч",
+  "8": "шщъы",
+  "9": "ьэюя"
+}
+
+const T9_EN = {
+  "2": "abc",
+  "3": "def",
+  "4": "ghi",
+  "5": "jkl",
+  "6": "mno",
+  "7": "pqrs",
+  "8": "tuv",
+  "9": "wxyz"
+}
+
+const T9_DIGITS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"]
+
+export default {
+  props: ["keyboardType", "initialText"],
+
+  data: {
+    t9mode: false,
+    mode: "letters",
+    lang: "ru",
+    shift: false,
+    draft: "",
+    row0: [],
+    row1: [],
+    row2: [],
+    t9keys: [],
+    t9Digit: "",
+    t9Index: 0,
+    t9Candidate: "",
+    t9Timer: null,
+    arcPercent: 30
+  },
+
+  onInit() {
+    const type = this.keyboardType || "QWERTY"
+    this.t9mode = type === "T9" || type === "t9"
+    this.draft = this.initialText || ""
+    this.refreshRows()
+    this.refreshT9()
+  },
+
+  onDestroy() {
+    if (this.t9Timer) {
+      clearTimeout(this.t9Timer)
+      this.t9Timer = null
+    }
+  },
+
+  hideKeyboard() {
+    this.commitT9()
+    this.shift = false
+    this.$emit("hide", {})
+  },
+
+  refreshRows() {
+    if (this.mode === "numbers") {
+      this.row0 = NUM_ROWS[0]
+      this.row1 = NUM_ROWS[1]
+      this.row2 = NUM_ROWS[2]
+      return
+    }
+    if (this.mode === "symbols") {
+      this.row0 = SYM_ROWS[0]
+      this.row1 = SYM_ROWS[1]
+      this.row2 = SYM_ROWS[2]
+      return
+    }
+
+    const rows = this.lang === "ru" ? RU_ROWS : EN_ROWS
+    const make = (row) => {
+      const out = []
+      for (let i = 0; i < row.length; i++) {
+        out.push(row[i].toUpperCase())
+      }
+      return out
+    }
+    this.row0 = make(rows[0])
+    this.row1 = make(rows[1])
+    this.row2 = make(rows[2])
+  },
+
+  keyPress(char) {
+    this.commitT9()
+    if (!char) {
+      return
+    }
+    this.vibrate()
+    let out = char
+    if (this.mode === "letters" && char !== " ") {
+      out = this.shift ? char.toUpperCase() : char.toLowerCase()
+    }
+    this.appendText(out)
+    if (this.shift && char !== " ") {
+      this.shift = false
+    }
+  },
+
+  toggleShift() {
+    this.shift = !this.shift
+    this.vibrate()
+  },
+
+  toggleMode() {
+    if (this.t9mode) {
+      this.commitT9()
+      this.t9mode = false
+      this.mode = "letters"
+      this.refreshRows()
+      this.vibrate()
+      return
+    }
+    this.mode = this.mode === "letters" ? "numbers" : "letters"
+    this.shift = false
+    this.refreshRows()
+    this.vibrate()
+  },
+
+  toggleSymbols() {
+    this.mode = "symbols"
+    this.refreshRows()
+    this.vibrate()
+  },
+
+  toggleNumbers() {
+    this.mode = "numbers"
+    this.refreshRows()
+    this.vibrate()
+  },
+
+  switchLang() {
+    this.commitT9()
+    this.lang = this.lang === "ru" ? "en" : "ru"
+    this.shift = false
+    this.refreshRows()
+    this.refreshT9()
+    this.vibrate()
+  },
+
+  appendText(val) {
+    if (!val || this.draft.length >= 200) {
+      return
+    }
+    this.draft = this.draft + val
+    this.$emit("input", { value: val })
+  },
+
+  deleteChar() {
+    if (this.t9Digit) {
+      this.cancelT9()
+      return
+    }
+    this.vibrate()
+    if (this.draft.length > 0) {
+      this.draft = this.draft.substring(0, this.draft.length - 1)
+    }
+    this.$emit("delete", {})
+  },
+
+  doEnter() {
+    this.commitT9()
+    this.vibrate()
+    this.$emit("enter", { value: this.draft })
+  },
+
+  onKeysScroll(e) {
+    const src = e && e.detail ? e.detail : e
+    let x = 0
+    if (src && typeof src.scrollX === "number") {
+      x = src.scrollX
+    } else if (src && typeof src.scrollLeft === "number") {
+      x = src.scrollLeft
+    }
+    let percent = 30 + (x / 600) * 100
+    if (percent > 100) {
+      percent = 100
+    }
+    this.arcPercent = parseInt(percent)
+  },
+
+  t9Group(digit) {
+    const table = this.lang === "ru" ? T9_RU : T9_EN
+    return table[digit] || ""
+  },
+
+  t9Sub(digit) {
+    if (this.t9Digit === digit && this.t9Candidate) {
+      return this.t9Candidate
+    }
+    const group = this.t9Group(digit)
+    return group ? group.substr(0, 3) : ""
+  },
+
+  refreshT9() {
+    const out = []
+    for (let i = 0; i < T9_DIGITS.length; i++) {
+      const d = T9_DIGITS[i]
+      out.push({ d: d, sub: this.t9Sub(d) })
+    }
+    this.t9keys = out
+  },
+
+  t9Press(digit) {
+    const key = String(digit)
+    const group = this.t9Group(key)
+
+    if (!group) {
+      this.commitT9()
+      this.vibrate()
+      this.appendText(key)
+      return
+    }
+
+    if (this.t9Digit === key) {
+      this.t9Index = (this.t9Index + 1) % group.length
+    } else {
+      this.commitT9()
+      this.t9Digit = key
+      this.t9Index = 0
+    }
+
+    this.t9Candidate = group.charAt(this.t9Index)
+    this.vibrate()
+    this.refreshT9()
+
+    if (this.t9Timer) {
+      clearTimeout(this.t9Timer)
+    }
+    this.t9Timer = setTimeout(() => {
+      this.commitT9()
+    }, 800)
+  },
+
+  commitT9() {
+    if (this.t9Timer) {
+      clearTimeout(this.t9Timer)
+      this.t9Timer = null
+    }
+    if (this.t9Digit && this.t9Candidate) {
+      this.appendText(this.t9Candidate)
+    }
+    this.cancelT9()
+  },
+
+  cancelT9() {
+    if (this.t9Timer) {
+      clearTimeout(this.t9Timer)
+      this.t9Timer = null
+    }
+    this.t9Digit = ""
+    this.t9Index = 0
+    this.t9Candidate = ""
+    this.refreshT9()
+  },
+
+  vibrate() {
+    try {
+      vibrator.vibrate({ mode: "short" })
+    } catch (e) {}
+  }
+}
+</script>
+
+<style>
+.im-page {
+  position: absolute;
+  left: 0px;
+  top: 0px;
+  width: 192px;
+  height: 490px;
+}
+
+.im-mask {
+  position: absolute;
+  left: 0px;
+  top: 0px;
+  width: 192px;
+  height: 490px;
+  background-color: rgba(0, 0, 0, 0.35);
+}
+
+.im-panel {
+  position: absolute;
+  left: 0px;
+  bottom: 0px;
+  width: 192px;
+  height: 305px;
+  background-color: #000000;
+}
+
+.im-top-btn {
+  position: absolute;
+  top: 2px;
+  width: 42px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+}
+
+.im-lang {
+  left: 6px;
+}
+
+.im-top-a {
+  left: 54px;
+}
+.im-top-mode {
+left: 102px;
+}
+.im-top-del {
+left: 150px;
+width: 38px;
+}
+.im-top-ico {
+width: 40px;
+height: 36px;
+}
+.im-space-ico {
+width: 38px;
+height: 38px;
+}
+.im-lang-t {
+font-size: 15px;
+font-weight: bold;
+color: #ffffff;
+text-align: center;
+}
+.im-top-t {
+font-size: 16px;
+font-weight: bold;
+color: #ffffff;
+text-align: center;
+lines: 1;
+}
+.im-search {
+position: absolute;
+left: 3px;
+top: 47px;
+width: 186px;
+height: 60px;
+}
+.im-draft {
+position: absolute;
+left: 15px;
+top: 55px;
+width: 118px;
+height: 44px;
+font-size: 22px;
+font-weight: bold;
+line-height: 44px;
+lines: 1;
+text-overflow: ellipsis;
+}
+.im-draft-full {
+color: #ffffff;
+}
+.im-draft-empty {
+color: rgba(255, 255, 255, 0.45);
+}
+.im-send {
+position: absolute;
+left: 142px;
+top: 55px;
+width: 42px;
+height: 44px;
+background-color: #4d6bfe;
+border-radius: 22px;
+align-items: center;
+justify-content: center;
+}
+.im-send-ico {
+width: 22px;
+height: 22px;
+}
+.im-arc {
+position: absolute;
+left: 2px;
+top: 116px;
+width: 188px;
+height: 188px;
+start-angle: 204deg;
+total-angle: -48deg;
+color: #ffffff;
+stroke-width: 6px;
+layer-color: #262626;
+}
+.im-keys {
+position: absolute;
+left: 0px;
+top: 116px;
+width: 192px;
+height: 170px;
+}
+.im-keys-col {
+width: 800px;
+height: 170px;
+margin-left: 3px;
+flex-direction: column;
+}
+.im-key-row {
+height: 60px;
+flex-direction: row;
+align-items: center;
+}
+.im-key-row-1 {
+margin-top: -5px;
+margin-left: 32px;
+}
+.im-key-row-2 {
+margin-top: -5px;
+margin-left: 64px;
+}
+.im-key {
+width: 60px;
+height: 60px;
+background-color: #262626;
+border-radius: 30px;
+border-color: rgba(255, 255, 255, 0.06);
+border-width: 3px;
+border-style: solid;
+align-items: center;
+justify-content: center;
+margin-right: 3px;
+}
+.im-key-space-img {
+width: 60px;
+height: 60px;
+margin-right: 3px;
+}
+.im-key-t {
+font-size: 32px;
+font-weight: bold;
+color: #ffffff;
+text-align: center;
+}
+.im-t9-grid {
+position: absolute;
+left: 3px;
+top: 118px;
+width: 186px;
+height: 170px;
+flex-direction: row;
+flex-wrap: wrap;
+}
+.im-t9-key {
+width: 56px;
+height: 38px;
+background-color: #262626;
+border-radius: 19px;
+border-color: rgba(255, 255, 255, 0.06);
+border-width: 3px;
+border-style: solid;
+align-items: center;
+justify-content: center;
+flex-direction: row;
+margin-right: 6px;
+margin-bottom: 4px;
+}
+.im-t9-num {
+font-size: 17px;
+font-weight: bold;
+color: #ffffff;
+}
+.im-t9-sub {
+font-size: 9px;
+color: rgba(255, 255, 255, 0.55);
+margin-left: 2px;
+}
