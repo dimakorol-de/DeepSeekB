@@ -198,7 +198,7 @@ export function buildPayload(options) {
 
   const history = opts.history || []
   for (let i = 0; i < history.length; i++) {
-    const item = history[i]
+    const item = history.slice(i, i + 1).pop()
     if (!item || !item.text) {
       continue
     }
@@ -323,8 +323,8 @@ export function resolveHostIp(host, servers) {
   let chain = Promise.reject(new Error("no resolver"))
 
   for (let i = list.length - 1; i >= 0; i--) {
+    const server = list.slice(i, i + 1).pop()
     chain = chain.catch(function () {
-      const server = list[i]
       const url = server.url.replace("{host}", host)
       return httpRequest(url, {
         method: "GET",
@@ -339,7 +339,7 @@ export function resolveHostIp(host, servers) {
           throw new Error("no answer")
         }
         for (let j = 0; j < body.Answer.length; j++) {
-          const answer = body.Answer[j]
+          const answer = body.Answer.slice(j, j + 1).pop()
           if (answer && answer.type === 1 && answer.data) {
             return answer.data
           }
@@ -384,12 +384,11 @@ export function generateContent(options) {
         return bridgeRoute(opts, path)
       })
     }
-    if (directReady) {
-      routes.push(function () {
-        return directRoute(opts, path)
-      })
-    }
-    if (trim(opts.relay)) {
+    if (directReady) {routes.push(function () {
+return directRoute(opts, path)
+})
+}
+if (trim(opts.relay)) {
 routes.push(function () {
 return relayRoute(opts, path)
 })
@@ -415,7 +414,8 @@ hint: "Включите мост через телефон (FetchBridge) в на
 )
 return
 }
-routesindex.then(
+const routeFn = routes.slice(index, index + 1).pop()
+routeFn().then(
 function (norm) {
 const status = norm.status || 0
 if (status >= 200 && status < 300) {
@@ -471,7 +471,7 @@ export function extractText(body) {
 if (!body || !body.choices || !body.choices.length) {
 return ""
 }
-const choice = body.choices[0]
+const choice = body.choices.slice(0, 1).pop()
 if (!choice || !choice.message) {
 return ""
 }
@@ -605,7 +605,7 @@ const norm = normalizeResponse(res)
 const ok = norm.status >= 200 && norm.status < 300
 let balanceText = "Ключ работает"
 if (ok && norm.body && norm.body.balance_infos && norm.body.balance_infos.length) {
-const info = norm.body.balance_infos[0]
+const info = norm.body.balance_infos.slice(0, 1).pop()
 if (info && info.total_balance !== undefined) {
 balanceText = "Ключ работает (баланс: " + info.total_balance + " " + (info.currency || "") + ")"
 }
