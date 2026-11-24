@@ -1,0 +1,590 @@
+<template>
+  <div class="page">
+    <text class="clock">{{ clock }}</text>
+    <text class="title">Диалоги</text>
+
+    <div class="actions">
+      <div class="btn btn-primary" onclick="createChat">
+        <image class="btn-icon" src="/common/images/plus.png"></image>
+      </div>
+      <div class="btn btn-secondary" onclick="openSettings">
+        <image class="btn-icon" src="/common/images/gear.png"></image>
+      </div>
+    </div>
+
+    <list
+      class="list"
+      @scroll="onListScroll"
+      @scrolltop="onListTop"
+      @scrollbottom="onListBottom">
+      <list-item
+        class="item"
+        type="item"
+        for="{{ chats }}"
+        tid="id"
+        onclick="openChat($idx)">
+        <div class="card" onlongpress="askDelete($idx)">
+          <div class="card-main">
+            <text class="card-title">{{ $item.title }}</text>
+            <text class="card-sub">{{ $item.preview }}</text>
+          </div>
+          <image class="card-arrow" src="/common/images/enter.png"></image>
+        </div>
+      </list-item>
+      <list-item class="item-pad" type="pad"></list-item>
+    </list>
+
+    <div if="{{ chatsLoaded && chats.length === 0 }}" class="empty">
+      <image class="empty-image" src="/common/images/empty.png"></image>
+      <text class="empty-title">Здесь ничего нет</text>
+      <text class="empty-sub">попробуйте нажать</text>
+      <text class="empty-sub empty-sub-last">на +</text>
+    </div>
+
+    <image if="{{ topFadeOn }}" class="fade fade-top" src="/common/images/hd.png"></image>
+    <image if="{{ bottomFadeOn }}" class="fade fade-bottom" src="/common/images/hd-bottom.png"></image>
+
+    <div if="{{ delShow }}" class="mask">
+      <div class="dialog">
+        <div class="dialog-btn dialog-btn-cancel" onclick="cancelDelete">
+          <image class="dialog-btn-icon" src="/common/images/arrow.png"></image>
+        </div>
+        <text class="dialog-title">Удалить диалог?</text>
+        <text class="dialog-sub">{{ delTitle }}</text>
+        <div class="dialog-btn dialog-btn-delete" onclick="confirmDelete">
+          <image class="dialog-btn-icon dialog-btn-icon-delete" src="/common/images/trash.png"></image>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+import router from "@system.router"
+import storage from "@system.storage"
+import vibrator from "@system.vibrator"
+
+import {
+  KEY_CHATS,
+  autoCleanupIfEnabled,
+  removeValue,
+  messagesKey
+} from "../../common/app-store.js"
+
+const STORE_KEY = KEY_CHATS
+
+export default {
+  private: {
+    clock: "",
+    chats: [],
+    chatsLoaded: false,
+    delShow: false,
+    delIndex: -1,
+    delTitle: "",
+    longpressAt: 0,
+    creatingChat: false,
+    topFadeOn: false,
+    bottomFadeOn: false,
+    listAtBottom: false,
+    listHasOverflow: false,
+    listScrollPos: 0,
+    timer: null
+  },
+
+  onInit() {
+    this.tick()
+    this.timer = setInterval(() => {
+      this.tick()
+    }, 20000)
+    this.runAutoCleanup()
+    this.updateListOverflow()
+  },
+
+  onShow() {
+    this.tick()
+    this.runAutoCleanup()
+  },
+
+  runAutoCleanup() {
+    autoCleanupIfEnabled(() => {
+      this.loadChats()
+    })
+  },
+
+  onDestroy() {
+    if (this.timer) {
+      clearInterval(this.timer)
+      this.timer = null
+    }
+  },
+
+  tick() {
+    const now = new Date()
+    const h = now.getHours()
+    const m = now.getMinutes()
+    this.clock = (h < 10 ? "0" + h : "" + h) + ":" + (m < 10 ? "0" + m : "" + m)
+  },
+
+  loadChats() {
+    storage.get({
+      key: STORE_KEY,
+      success: (data) => {
+        let list = []
+        if (data) {
+          try {
+            const parsed = JSON.parse(data)
+            if (Array.isArray(parsed)) {
+              list = parsed
+            }
+          } catch (err) {
+            console.log("deepseekband: parse chats failed " + err.message)
+          }
+        }
+        this.chats = this.cleanChats(list)
+        this.chatsLoaded = true
+        this.updateListOverflow()
+      },
+      fail: () => {
+        this.chats = []
+        this.chatsLoaded = true
+        this.updateListOverflow()
+      }
+    })
+  },
+
+  cleanChats(list) {
+    const src = list || []
+    const seen = {}
+    const out = []
+    for (let i = 0; i < src.length; i++) {
+      const item = src.at ? src.at(i) : src.slice(i, i + 1).pop()
+      if (!item || !item.id || !item.preview) {
+        continue
+      }
+      const key = String(item.id)
+      if (seen[key]) {
+        continue
+      }
+      seen[key] = true
+      out.push(item)
+    }
+    return out
+  },
+
+  updateListOverflow() {
+    const count = this.chats ? this.chats.length : 0
+    this.listHasOverflow = count * 92 + 16 > 324
+    if (!this.listHasOverflow) {
+      this.listAtBottom = false
+      this.listScrollPos = 0
+      if (this.topFadeOn) {
+        this.topFadeOn = false
+      }
+    }
+    this.syncBottomFade()
+  },
+
+  syncBottomFade() {
+    const show = this.listHasOverflow && !this.listAtBottom
+    if (show !== this.bottomFadeOn) {
+      this.bottomFadeOn = show
+    }
+  },
+
+  onListScroll(e) {
+    const src = e && e.detail ? e.detail : e
+    const dy = src && typeof src.scrollY === "number" ? src.scrollY : 0
+    this.listScrollPos += dy
+    if (this.listScrollPos < 0) {
+      this.listScrollPos = 0
+    }
+    if (dy > 0) {
+      if (!this.topFadeOn) {
+        this.topFadeOn = true
+      }
+    } else if (dy < 0) {
+      if (this.listScrollPos <= 0 && this.topFadeOn) {
+        this.topFadeOn = false
+      }
+      if (this.listAtBottom) {
+        this.listAtBottom = false
+        this.syncBottomFade()
+      }
+    }
+  },
+
+  onListTop() {
+    this.listScrollPos = 0
+    if (this.topFadeOn) {
+      this.topFadeOn = false
+    }
+    if (this.listAtBottom) {
+      this.listAtBottom = false
+    }
+    this.syncBottomFade()
+  },
+
+  onListBottom() {
+    if (this.listHasOverflow && !this.topFadeOn) {
+      this.topFadeOn = true
+    }
+    if (!this.listAtBottom) {
+      this.listAtBottom = true
+    }
+    this.syncBottomFade()
+  },
+
+  saveChats(list, done) {
+    storage.set({
+      key: STORE_KEY,
+      value: JSON.stringify(list || this.chats),
+      success: () => {
+        if (done) done()
+      },
+      fail: () => {
+        if (done) done()
+      }
+    })
+  },
+
+  createChat() {
+    if (this.creatingChat) {
+      return
+    }
+    this.creatingChat = true
+    const chat = {
+      id: "c" + Date.now() + "" + Math.floor(Math.random() * 1000),
+      title: "Новый диалог",
+      preview: ""
+    }
+    this.creatingChat = false
+    this.goToChatObject(chat)
+  },
+
+  openChat($idx) {
+    if (Date.now() - this.longpressAt < 800) {
+      return
+    }
+    this.goToChat($idx)
+  },
+
+  goToChat(idx) {
+    const chat = this.chats.slice(idx, idx + 1).pop()
+    if (!chat) {
+      return
+    }
+    this.goToChatObject(chat)
+  },
+
+  goToChatObject(chat) {
+    try {
+      storage.set({
+        key: "deepseekband_open_chat",
+        value: JSON.stringify({ id: String(chat.id), title: chat.title || "" })
+      })
+    } catch (e) {}
+    router.push({
+      uri: "/pages/chat",
+      params: {
+        id: chat.id,
+        title: chat.title
+      }
+    })
+  },
+
+  openSettings() {
+    router.push({
+      uri: "/pages/settings"
+    })
+  },
+
+  askDelete($idx) {
+    const chat = this.chats.slice($idx, $idx + 1).pop()
+    if (!chat) {
+      return
+    }
+    this.vibrate()
+    this.longpressAt = Date.now()
+    this.delIndex = $idx
+    this.delTitle = chat.title
+    this.delShow = true
+  },
+
+  vibrate() {
+    try {
+      vibrator.vibrate({ mode: "short" })
+    } catch (e) {}
+  },
+
+  cancelDelete() {
+    this.delShow = false
+    this.delIndex = -1
+    this.delTitle = ""
+  },
+
+  confirmDelete() {
+    const idx = this.delIndex
+    if (idx >= 0) {
+      const list = this.chats.slice()
+      const removed = list.slice(idx, idx + 1).pop()
+      list.splice(idx, 1)
+      this.chats = list
+      this.updateListOverflow()
+      this.saveChats()
+      if (removed && removed.id) {
+        removeValue(messagesKey(removed.id))
+      }
+    }
+    this.cancelDelete()
+  }
+}
+</script>
+
+<style>
+.page {
+  width: 192px;
+  height: 490px;
+  background-color: #000000;
+  flex-direction: column;
+  align-items: center;
+}
+
+.clock {
+  position: absolute;
+  left: 0px;
+  top: 26px;
+  width: 192px;
+  text-align: center;
+  font-size: 17px;
+  font-weight: bold;
+  line-height: 24px;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.title {
+  position: absolute;
+  left: 0px;
+  top: 50px;
+  width: 192px;
+  text-align: center;
+  font-size: 22px;
+  font-weight: bold;
+  line-height: 28px;
+  color: #ffffff;
+  lines: 1;
+  text-overflow: ellipsis;
+}
+
+.actions {
+  position: absolute;
+  left: 0px;
+  top: 92px;
+  width: 192px;
+  height: 48px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn {
+  width: 80px;
+  height: 48px;
+  border-radius: 24px;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-primary {
+  background-color: #4d6bfe;
+}
+
+.btn-secondary {
+  background-color: #333333;
+  margin-left: 10px;
+}
+
+.btn-icon {
+  width: 28px;
+  height: 28px;
+}
+
+.list {
+  position: absolute;
+  left: 0px;
+  top: 156px;
+  width: 192px;
+  height: 324px;
+}
+
+.empty {
+  position: absolute;
+  left: 0px;
+  top: 132px;
+  width: 192px;
+  height: 324px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.empty-image {
+  width: 72px;
+  height: 72px;
+  margin-bottom: 8px;
+}
+
+.empty-title {
+  width: 168px;
+  text-align: center;
+  font-size: 16px;
+  font-weight: bold;
+  line-height: 22px;
+  color: rgba(255, 255, 255, 0.45);
+  lines: 1;
+  text-overflow: ellipsis;
+}
+
+.empty-sub {
+  width: 168px;
+  margin-top: 2px;
+  text-align: center;
+  font-size: 14px;
+  line-height: 20px;
+  color: rgba(255, 255, 255, 0.35);
+  lines: 1;
+  text-overflow: ellipsis;
+}
+
+.empty-sub-last {
+  margin-top: 0px;
+}
+
+.item {
+  width: 192px;
+  height: 92px;
+}
+
+.item-pad {
+  width: 192px;
+  height: 16px;
+}
+
+.fade {
+  position: absolute;
+  left: 0px;
+  width: 192px;
+  height: 34px;
+}
+
+.fade-top {
+  top: 156px;
+}
+
+.fade-bottom {
+  top: 446px;
+}
+
+.card {
+  width: 168px;
+  height: 80px;
+margin-left: 12px;
+padding-left: 14px;
+padding-right: 10px;
+background-color: #262626;
+border-radius: 22px;
+flex-direction: row;
+align-items: center;
+}
+.card-main {
+flex: 1;
+height: 100%;
+flex-direction: column;
+justify-content: center;
+overflow: hidden;
+}
+.card-title {
+width: 100%;
+font-size: 18px;
+font-weight: bold;
+color: #ffffff;
+lines: 1;
+text-overflow: ellipsis;
+}
+.card-sub {
+width: 100%;
+margin-top: 3px;
+font-size: 14px;
+color: rgba(255, 255, 255, 0.6);
+lines: 1;
+text-overflow: ellipsis;
+}
+.card-arrow {
+width: 22px;
+height: 22px;
+margin-left: 6px;
+}
+.mask {
+position: absolute;
+left: 0px;
+top: 0px;
+width: 192px;
+height: 490px;
+background-color: rgba(0, 0, 0, 0.78);
+align-items: center;
+justify-content: center;
+}
+.dialog {
+width: 168px;
+padding-top: 16px;
+padding-right: 12px;
+padding-bottom: 16px;
+padding-left: 12px;
+background-color: #262626;
+border-radius: 22px;
+flex-direction: column;
+align-items: center;
+}
+.dialog-btn {
+width: 48px;
+height: 48px;
+border-radius: 24px;
+background-color: rgba(255, 255, 255, 0.05);
+border-width: 2px;
+border-style: solid;
+border-color: rgba(255, 255, 255, 0.2);
+flex-direction: row;
+align-items: center;
+justify-content: center;
+}
+.dialog-btn-cancel {
+border-color: rgba(77, 107, 254, 0.85);
+}
+.dialog-btn-delete {
+margin-top: 14px;
+border-color: rgba(255, 80, 80, 0.8);
+}
+.dialog-btn-icon {
+width: 30px;
+height: 30px;
+}
+.dialog-btn-icon-delete {
+width: 34px;
+height: 34px;
+}
+.dialog-title {
+width: 144px;
+margin-top: 12px;
+text-align: center;
+font-size: 18px;
+font-weight: bold;
+color: #ffffff;
+}
+.dialog-sub {
+width: 144px;
+margin-top: 4px;
+text-align: center;
+font-size: 15px;
+color: rgba(255, 255, 255, 0.6);
+lines: 1;
+text-overflow: ellipsis;
+}
