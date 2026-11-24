@@ -1,5 +1,5 @@
 import http from "@system.fetch"
-import { bridgeFetch, bridgeSupported, bridgeReady } from "./bridge.js"
+import { bridgeFetch, bridgeSupported } from "./bridge.js"
 
 function getFetch() {
   try {
@@ -20,16 +20,17 @@ function getFetch() {
   return null
 }
 
-export const API_HOST = "://deepseek.com"
-export const DEFAULT_MODEL = "deepseek-chat"
-export const REASONER_MODEL = "deepseek-reasoner"
+export const API_HOST = "openrouter.ai"
+export const API_PREFIX = "/api/v1"
+export const DEFAULT_MODEL = "deepseek/deepseek-chat:free"
+export const REASONER_MODEL = "deepseek/deepseek-r1:free"
 export const DEFAULT_MAX_TOKENS = 1500
 export const DEFAULT_TIMEOUT = 35000
 export const DNS_TIMEOUT = 8000
 
 export const MODEL_LIST = [
-  { id: "deepseek-chat", title: "DeepSeek V3 / Chat" },
-  { id: "deepseek-reasoner", title: "DeepSeek R1 (Думающий)" }
+  { id: "deepseek/deepseek-chat:free", title: "DeepSeek Chat (Free)" },
+  { id: "deepseek/deepseek-r1:free", title: "DeepSeek R1 (Free)" }
 ]
 
 export const NETWORK_MODES = [
@@ -82,13 +83,8 @@ export function normalizeResponse(res) {
       body = null
     }
   } else if (typeof data === "object") {
-    if (data.choices || data.error || data.balance_infos || data.is_available !== undefined) {
+    if (data.choices || data.error || data.data) {
       body = data
-    } else if (data.data !== undefined) {
-      body = data.data
-      if (typeof data.code === "number") {
-        status = data.code
-      }
     } else {
       body = data
     }
@@ -208,11 +204,9 @@ export function buildPayload(options) {
     })
   }
 
-  let selectedModel = trim(opts.model) || DEFAULT_MODEL
+  let selectedModel = DEFAULT_MODEL
   if (opts.thinking === "on" || opts.thinking === "high" || opts.thinking === "reasoner") {
     selectedModel = REASONER_MODEL
-  } else if (opts.thinking === "off") {
-    selectedModel = DEFAULT_MODEL
   }
 
   const payload = {
@@ -232,12 +226,14 @@ export function buildPayload(options) {
 function authHeader(options) {
   return {
     "Content-Type": "application/json",
-    "Authorization": "Bearer " + trim(options.apiKey)
+    "Authorization": "Bearer " + trim(options.apiKey),
+    "HTTP-Referer": "https://github.com",
+    "X-Title": "DeepSeekB"
   }
 }
 
 function directRoute(options, path) {
-  const url = "https://" + API_HOST + path
+  const url = "https://" + API_HOST + API_PREFIX + path
   const sslVerify = options.sslVerify !== false
 
   return httpRequest(url, {
@@ -260,7 +256,7 @@ function relayRoute(options, path) {
   if (!base) {
     return Promise.reject({ code: -1, data: "relay is not set", network: true })
   }
-  const url = joinBase(base, path)
+  const url = joinBase(base, API_PREFIX + path)
 
   return httpRequest(url, {
     method: "POST",
@@ -279,8 +275,8 @@ function relayRoute(options, path) {
 
 function pinnedRoute(options, path) {
   return resolveHostIp(API_HOST, options.dohServers).then(function (ip) {
-    const url = "https://" + ip + path
-    const displayUrl = "https://" + API_HOST + path
+    const url = "https://" + ip + API_PREFIX + path
+    const displayUrl = "https://" + API_HOST + API_PREFIX + path
     const header = authHeader(options)
     header["Host"] = API_HOST
 
@@ -301,7 +297,7 @@ function pinnedRoute(options, path) {
 }
 
 function bridgeRoute(options, path) {
-  const url = "https://" + API_HOST + path
+  const url = "https://" + API_HOST + API_PREFIX + path
 
   return bridgeFetch({
     url: url,
@@ -360,7 +356,7 @@ export function generateContent(options) {
     return Promise.reject({
       kind: "api",
       text: "Не задан API-ключ",
-      hint: "Откройте настройки и укажите ключ DeepSeek"
+      hint: "Откройте настройки и укажите ключ OpenRouter"
     })
   }
 
@@ -384,12 +380,13 @@ export function generateContent(options) {
         return bridgeRoute(opts, path)
       })
     }
-    if (directReady) {routes.push(function () {
-return directRoute(opts, path)
-})
-}
-if (trim(opts.relay)) {
-routes.push(function () {
+    if (directReady) {
+      routes.push(function () {
+        return directRoute(opts, path)
+      })
+    }
+    if (trim(opts.relay)) {
+      routes.push(function () {
 return relayRoute(opts, path)
 })
 }
@@ -504,26 +501,26 @@ const low = message.toLowerCase()
 if (err.empty) {
 return {
 text: "Пустой ответ от DeepSeek",
-hint: "Сервер перегружен. Повторите запрос через пару секунд."
+hint: "Бесплатный сервер перегружен. Повторите запрос."
 }
 }
 if (status === 401 || low.indexOf("authentication") >= 0 || low.indexOf("invalid") >= 0) {
 return {
 text: "Неверный API-ключ",
-hint: "Проверьте ключ (начинается с sk-...) в настройках"
+hint: "Проверьте ключ (начинается с sk-or-v1-...) в настройках"
 }
 }
-if (status === 402 || low.indexOf("insufficient balance") >= 0) {
+if (status === 402 || low.indexOf("insufficient") >= 0 || low.indexOf("credits") >= 0) {
 return {
-text: "Недостаточно средств",
-hint: "Пополните баланс на deepseek.com"
+text: "Нет кредитов на ключе",
+hint: "Проверьте бесплатный лимит на openrouter.ai"
 }
 }
 if (status === 403) {
 const raw = snippet(err.text, 120)
 return {
 text: "Доступ запрещён (403)",
-hint: message || raw || "Проверьте права API-ключа"
+hint: message || raw || "Проверьте настройки ключа OpenRouter"
 }
 }
 if (status === 404) {
@@ -534,13 +531,13 @@ hint: message || "Проверьте настройки модели"
 }
 if (status === 429) {
 return {
-text: "Превышен лимит запросов",
-hint: "Подождите немного и повторите"
+text: "Лимит бесплатных запросов",
+hint: "Подождите 10-20 секунд и повторите"
 }
 }
 if (status >= 500) {
 return {
-text: "Ошибка сервера DeepSeek",
+text: "Ошибка сервера OpenRouter",
 hint: message || "Повторите попытку позже"
 }
 }
@@ -586,10 +583,10 @@ status: 0,
 route: "",
 url: "",
 text: "Не задан API-ключ",
-hint: "Откройте настройки и укажите ключ DeepSeek"
+hint: "Откройте настройки и укажите ключ OpenRouter"
 })
 }
-const url = "https://" + API_HOST + "/user/balance"
+const url = "https://" + API_HOST + API_PREFIX + "/auth/key"
 return bridgeFetch({
 url: url,
 method: "GET",
@@ -603,15 +600,8 @@ timeout: opts.timeout || 15000
 function (res) {
 const norm = normalizeResponse(res)
 const ok = norm.status >= 200 && norm.status < 300
-let balanceText = "Ключ работает"
-if (ok && norm.body && norm.body.balance_infos && norm.body.balance_infos.length) {
-const info = norm.body.balance_infos.slice(0, 1).pop()
-if (info && info.total_balance !== undefined) {
-balanceText = "Ключ работает (баланс: " + info.total_balance + " " + (info.currency || "") + ")"
-}
-}
 const d = ok
-? { text: balanceText, hint: "" }
+? { text: "Ключ OpenRouter работает!", hint: "" }
 : describeError({
 kind: "api",
 status: norm.status,
