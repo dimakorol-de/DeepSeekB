@@ -1,0 +1,899 @@
+<import name="input-method" src="../../components/InputMethod/InputMethod.ux"></import>
+
+<template>
+  <div class="page">
+    <text class="clock">{{ clock }}</text>
+    <text class="title">{{ chatTitle }}</text>
+
+    <scroll class="msg-list" id="msgList" scroll-y="true">
+      <div class="msg-item" for="{{ messages }}">
+        <div if="{{ $item.role === 'deepseek' }}" class="msg-row msg-row-ai">
+          <div class="msg-col">
+            <div class="msg-header">
+              <text class="msg-sender msg-sender-ai">DeepSeek</text>
+            </div>
+            <div class="bubble bubble-ai">
+              <text class="bubble-text">{{ $item.text }}</text>
+            </div>
+          </div>
+        </div>
+
+        <div if="{{ $item.role === 'user' }}" class="msg-row msg-row-user">
+          <div class="msg-col msg-col-user">
+            <text class="msg-sender msg-sender-user">Вы</text>
+            <div class="bubble bubble-user">
+              <text class="bubble-text">{{ $item.text }}</text>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div if="{{ waiting }}" class="msg-row msg-row-ai">
+        <div class="msg-col">
+          <div class="msg-header">
+            <text class="msg-sender msg-sender-ai">DeepSeek</text>
+          </div>
+          <div class="bubble bubble-ai bubble-typing">
+            <div class="typing-dot typing-dot-1 {{ dot1 }}"></div>
+            <div class="typing-dot typing-dot-2 {{ dot2 }}"></div>
+            <div class="typing-dot typing-dot-3 {{ dot3 }}"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="list-end"></div>
+    </scroll>
+
+    <div if="{{ messages.length === 0 && !waiting }}" class="empty">
+      <text class="empty-title">здесь пока пусто</text>
+      <text class="empty-sub">введите задачу!</text>
+    </div>
+
+    <div if="{{ errorText }}" class="error-box" onclick="dismissError">
+      <text class="error-text">{{ errorText }}</text>
+    </div>
+
+    <div class="input-bar" onclick="openKeyboard">
+      <text class="input-placeholder">{{ inputText ? inputText : 'Ввод' }}</text>
+    </div>
+
+    <input-method
+      if="{{ keyboardVisible }}"
+      id="im"
+      keyboard-type="{{ keyboardType }}"
+      initial-text="{{ inputText }}"
+      @input="onKeyInput"
+      @delete="onKeyDelete"
+      @enter="onKeyEnter"
+      @hide="onKeyboardHide">
+    </input-method>
+  </div>
+</template>
+
+<script>
+import storage from "@system.storage"
+
+import {
+  getList,
+  setList,
+  messagesKey,
+  KEY_CHATS,
+  KEY_API_KEY,
+  KEY_MODEL,
+  KEY_RELAY,
+  KEY_NETWORK_MODE,
+  KEY_SSL_VERIFY,
+  KEY_SYSTEM_PROMPT,
+  KEY_THINKING_MODE,
+  KEY_KEYBOARD_MODE,
+  DEFAULT_SYSTEM_PROMPT,
+  getValue
+} from "../../common/app-store.js"
+import { generateContent, extractText, describeError, DEFAULT_MODEL } from "../../common/deepseek-api.js"
+
+const CHAT_TITLE_MAX = 24
+const TYPING_ROW_H = 54
+const WAIT_CYCLE = 20
+const WAIT_SHIFT = 4
+const REVEAL_TICK_MS = 50
+const REVEAL_TICKS = 40
+const REVEAL_MIN_STEP = 2
+const REVEAL_SKIP = 4
+
+export default {
+  private: {
+    clock: "",
+    chatTitle: "Чат",
+    chatId: "",
+    messages: [],
+    inputText: "",
+    errorText: "",
+    waiting: false,
+    waitPhase: 0,
+    waitTimer: null,
+    collapseTimer: null,
+    revealTimer: null,
+    revealFull: null,
+    dot1: "",
+    dot2: "",
+    dot3: "",
+    keyboardType: "QWERTY",
+    keyboardVisible: false,
+    replyTimer: null,
+    timer: null
+  },
+
+  onInit(params) {
+    this.cancelReveal()
+    const p = params || {}
+    const incomingId = p.id ? String(p.id) : ""
+    const isNewOpen = !!incomingId
+
+    if (isNewOpen) {
+      const isSwitch = incomingId !== this.chatId
+      this.chatId = incomingId
+      if (p.title) {
+        this.chatTitle = p.title
+      } else if (isSwitch) {
+        this.chatTitle = "Новый диалог"
+      }
+      this.messages = []
+      this.inputText = ""
+      this.keyboardVisible = false
+    } else if (this.chatId) {
+      this.inputText = ""
+      this.keyboardVisible = false
+    } else {
+      this.chatId = this.newChatId()
+      this.chatTitle = p.title ? p.title : "Новый диалог"
+      this.messages = []
+      this.inputText = ""
+      this.keyboardVisible = false
+    }
+
+    this.tick()
+    if (this.timer) {
+      clearInterval(this.timer)
+      this.timer = null
+    }
+    this.timer = setInterval(() => {
+      this.tick()
+    }, 20000)
+    this.loadKeyboardMode()
+    this.loadMessages()
+    if (!p.title || this.chatTitle === "Новый диалог" || this.chatTitle === "Чат") {
+      this.loadChatMeta()
+    }
+  },
+
+  loadChatMeta() {
+    if (!this.chatId) {
+      return
+    }
+    getList(KEY_CHATS, (chats) => {
+      const list = chats || []
+      for (let i = 0; i < list.length; i++) {
+        const item = list.slice(i, i + 1).pop()
+        if (item && String(item.id) === this.chatId) {
+          if (item.title) {
+            this.chatTitle = item.title
+          }
+          return
+        }
+      }
+    })
+  },
+
+  newChatId() {
+    return "c" + Date.now() + "" + Math.floor(Math.random() * 1000)
+  },
+
+  onHide() {
+    this.finishReveal()
+    this.saveCard()
+    this.stopWaiting()
+  },
+
+  onShow() {
+    this.tick()
+    this.loadKeyboardMode()
+    this.tryRestorePendingChat()
+    if (this.chatId) {
+      setTimeout(() => {
+        this.loadMessages()
+        this.loadChatMeta()
+      }, 10)
+    }
+  },
+
+  tryRestorePendingChat() {
+    storage.get({
+      key: "deepseekband_open_chat",
+      success: (data) => {
+        if (!data) return
+        let p = null
+        try {
+          p = JSON.parse(data)
+        } catch (e) {
+          return
+        }
+        if (!p || !p.id) return
+        const incomingId = String(p.id)
+        if (incomingId !== this.chatId) {
+          this.chatId = incomingId
+          this.chatTitle = p.title ? p.title : "Новый диалог"
+          this.messages = []
+          this.inputText = ""
+          this.keyboardVisible = false
+          this.loadMessages()
+          this.loadChatMeta()
+          try {
+            storage.delete({ key: "deepseekband_open_chat" })
+          } catch (e) {}
+        }
+      },
+      fail: () => {}
+    })
+  },
+
+  onDestroy() {
+    this.cancelReveal()
+    if (this.timer) {
+      clearInterval(this.timer)
+      this.timer = null
+    }
+    if (this.replyTimer) {
+      clearTimeout(this.replyTimer)
+      this.replyTimer = null
+    }
+    this.stopWaiting()
+  },
+
+  tick() {
+    const now = new Date()
+    const h = now.getHours()
+    const m = now.getMinutes()
+    this.clock = (h < 10 ? "0" + h : "" + h) + ":" + (m < 10 ? "0" + m : "" + m)
+  },
+
+  loadKeyboardMode() {
+    storage.get({
+      key: KEY_KEYBOARD_MODE,
+      success: (data) => {
+        this.keyboardType = data === "t9" || data === "T9" ? "T9" : "QWERTY"
+      },
+      fail: () => {
+        this.keyboardType = "QWERTY"
+      }
+    })
+  },
+
+  loadMessages() {
+    this.cancelReveal()
+    if (!this.chatId) {
+      this.messages = []
+      return
+    }
+    getList(messagesKey(this.chatId), (list) => {
+      const arr = list && list.length ? list : []
+      this.messages = arr
+      if (this.messages.length) {
+        setTimeout(() => {
+          this.scrollChatToBottom()
+        }, 50)
+      }
+    })
+  },
+
+  setMessages(list) {
+    this.messages = list
+    setList(messagesKey(this.chatId), list)
+    this.saveCard()
+  },
+
+  revealMessage(fullList) {
+    this.cancelReveal()
+    setList(messagesKey(this.chatId), fullList)
+    this.saveCard(fullList)
+
+    const last = fullList.slice(-1).pop()
+    const full = String((last && last.text) || "")
+    if (full.length <= REVEAL_SKIP) {
+      this.messages = fullList
+      this.scrollChatToBottom()
+      return
+    }
+
+    const base = fullList.slice(0, fullList.length - 1)
+    const step = Math.max(REVEAL_MIN_STEP, Math.ceil(full.length / REVEAL_TICKS))
+    let shown = step
+    let ticks = 0
+    this.revealFull = fullList
+    this.messages = base.concat([{ id: last.id, role: last.role, text: full.slice(0, shown) }])
+    this.scrollChatToBottom(true)
+
+    this.revealTimer = setInterval(() => {
+      if (this.revealFull !== fullList) {
+        this.cancelReveal()
+        return
+      }
+      shown += step
+      ticks += 1
+      if (shown >= full.length) {
+        this.finishReveal()
+        this.scrollChatToBottom()
+        return
+      }
+      this.messages = base.concat([{ id: last.id, role: last.role, text: full.slice(0, shown) }])
+      if (ticks % 2 === 0) {
+        this.scrollChatToBottom(true)
+      }
+    }, REVEAL_TICK_MS)
+  },
+
+  finishReveal() {
+    if (this.revealTimer) {
+      clearInterval(this.revealTimer)
+      this.revealTimer = null
+    }
+    if (this.revealFull) {
+      this.messages = this.revealFull
+      this.revealFull = null
+    }
+  },
+
+  cancelReveal() {
+    if (this.revealTimer) {
+      clearInterval(this.revealTimer)
+      this.revealTimer = null
+    }
+    this.revealFull = null
+  },
+
+  chatPreview(list) {
+    const arr = list || []
+    for (let i = arr.length - 1; i >= 0; i--) {
+      const item = arr.slice(i, i + 1).pop()
+      if (item && item.text) {
+        return item.role === "deepseek" ? item.text : "Вы: " + item.text
+      }
+    }
+    return ""
+  },
+
+  saveCard(list) {
+    const msgs = list || this.messages
+    if (!msgs.length) {
+      return
+    }
+
+    const chatId = this.chatId
+    const preview = this.chatPreview(msgs)
+    let title = ""
+    for (let i = 0; i < msgs.length; i++) {
+      const m = msgs.slice(i, i + 1).pop()
+      if (m && m.role === "user") {
+        title = String(m.text).slice(0, CHAT_TITLE_MAX)
+        break
+      }
+    }
+
+    getList(KEY_CHATS, (chats) => {
+      const src = chats || []
+      const list = []
+      let found = false
+      for (let i = 0; i < src.length; i++) {
+        const item = src.slice(i, i + 1).pop()
+        if (!item) {
+          continue
+        }
+        if (String(item.id) === chatId) {
+          found = true
+          const next = {
+            id: item.id,
+            title: item.title,
+            preview: preview,createdAt: item.createdAt || Date.now(),
+updatedAt: Date.now()
+}
+if (title && item.title === "Новый диалог") {
+next.title = title
+this.chatTitle = title
+}
+list.push(next)
+} else {
+list.push(item)
+}
+}
+if (!found) {
+list.unshift({
+id: chatId,
+title: title || "Новый диалог",
+preview: preview,
+createdAt: Date.now(),
+updatedAt: Date.now()
+})
+if (title) {
+this.chatTitle = title
+}
+}
+setList(KEY_CHATS, list)
+})
+},
+openKeyboard() {
+this.keyboardVisible = true
+},
+onKeyInput(e) {
+const val = e && e.detail ? e.detail.value : (e && e.value ? e.value : "")
+if (val) {
+this.inputText = this.inputText + val
+}
+},
+onKeyDelete() {
+if (this.inputText.length > 0) {
+this.inputText = this.inputText.substring(0, this.inputText.length - 1)
+}
+},
+onKeyboardHide() {
+this.keyboardVisible = false
+},
+onKeyEnter(e) {
+let raw = this.inputText
+if (e && e.detail && typeof e.detail.value === "string") {
+raw = e.detail.value
+} else if (e && typeof e.value === "string") {
+raw = e.value
+}
+if (raw.length === 0) {
+raw = this.inputText
+}
+const text = raw.trim()
+if (text === "") {
+return
+}
+this.finishReveal()
+const userMsg = {
+id: "u" + Date.now(),
+role: "user",
+text: text
+}
+const historyForReq = (this.messages || []).concat([userMsg])
+this.setMessages(historyForReq)
+this.inputText = ""
+this.scrollChatToBottom()
+this.keyboardVisible = false
+if (this.replyTimer) {
+clearTimeout(this.replyTimer)
+this.replyTimer = null
+}
+this.sendToDeepSeek(historyForReq)
+},
+sendToDeepSeek(history) {
+if (!this.chatId) {
+return
+}
+const self = this
+this.errorText = ""
+const showError = function (err) {
+let detail = ""
+if (err && !err.kind && (err.message || err.name)) {
+detail = "Ошибка: " + String(err.message || err.name)
+} else {
+const d = describeError(err)
+detail = d.text || "Ошибка"
+if (d.hint && d.hint !== d.text) {
+detail = detail + " — " + d.hint
+}
+if (err && err.status) {
+detail = detail + " (HTTP " + err.status + ")"
+}
+}
+self.collapseWaiting()
+self.errorText = detail.length > 140 ? detail.slice(0, 140) + "…" : detail
+}
+const settings = {}
+const keys = [
+{ name: "apiKey", key: KEY_API_KEY, fallback: "" },
+{ name: "model", key: KEY_MODEL, fallback: DEFAULT_MODEL },
+{ name: "relay", key: KEY_RELAY, fallback: "" },
+{ name: "networkMode", key: KEY_NETWORK_MODE, fallback: "auto" },
+{ name: "sslVerify", key: KEY_SSL_VERIFY, fallback: "true" },
+{ name: "systemPrompt", key: KEY_SYSTEM_PROMPT, fallback: DEFAULT_SYSTEM_PROMPT },
+{ name: "thinkingMode", key: KEY_THINKING_MODE, fallback: "off" }
+]
+const loadNext = function (index) {
+if (index >= keys.length) {
+send()
+return
+}
+const item = keys.slice(index, index + 1).pop()
+try {
+getValue(item.key, item.fallback, function (value) {
+settings[item.name] = value
+loadNext(index + 1)
+})
+} catch (e) {
+showError(e)
+}
+}
+const send = function () {
+if (!settings.apiKey) {
+self.errorText = "Нет API-ключа. Укажите его в настр."
+return
+}
+try {
+const historyPayload = []
+for (let i = 0; i < history.length; i++) {
+const m = history.slice(i, i + 1).pop()
+if (!m || !m.text) {
+continue
+}
+historyPayload.push({
+role: m.role === "deepseek" ? "assistant" : "user",
+text: m.text
+})
+}
+self.startWaiting()
+generateContent({
+apiKey: settings.apiKey,
+model: settings.model,
+relay: settings.relay,
+networkMode: settings.networkMode,
+sslVerify: settings.sslVerify !== "false",
+systemInstruction: settings.systemPrompt,
+history: historyPayload,
+thinking: settings.thinkingMode
+})
+.then(function (norm) {
+const ans = extractText(norm.body)
+if (!ans) {
+showError({
+kind: "api",
+status: norm.status || 0,
+body: norm.body,
+text: norm.text,
+url: norm.url,
+empty: true
+})
+return
+}
+self.stopWaiting()
+self.errorText = ""
+self.revealMessage(
+history.concat([
+{
+id: "d" + Date.now(),
+role: "deepseek",
+text: ans
+}
+])
+)
+})
+.catch(showError)
+} catch (e) {
+showError(e)
+}
+}
+loadNext(0)
+},
+startWaiting() {
+this.stopWaiting()
+this.waiting = true
+this.waitPhase = 0
+this.updateDots()
+this.waitTimer = setInterval(() => {
+this.waitPhase = (this.waitPhase + 1) % WAIT_CYCLE
+this.updateDots()
+}, 80)
+this.scrollChatToBottom()
+setTimeout(() => {
+if (this.waiting) {
+this.scrollChatToBottom()
+}
+}, 250)
+},
+dotState(k) {
+const d = (this.waitPhase - k * WAIT_SHIFT + WAIT_CYCLE) % WAIT_CYCLE
+const dist = d <= WAIT_CYCLE / 2 ? d : WAIT_CYCLE - d
+if (dist <= 5) {
+return "typing-dot-l" + (6 - dist)
+}
+return ""
+},
+updateDots() {
+this.dot1 = this.dotState(0)
+this.dot2 = this.dotState(1)
+this.dot3 = this.dotState(2)
+},
+collapseWaiting() {
+if (!this.waiting) {
+this.stopWaiting()
+return
+}
+if (this.waitTimer) {
+clearInterval(this.waitTimer)
+this.waitTimer = null
+}
+if (this.collapseTimer) {
+clearTimeout(this.collapseTimer)
+this.collapseTimer = null
+}
+this.dot1 = ""
+this.dot2 = ""
+this.dot3 = ""
+let scrolled = false
+try {
+const el = this.$element("msgList")
+if (el && typeof el.scrollBy === "function") {
+el.scrollBy({ top: -TYPING_ROW_H, left: 0, behavior: "smooth" })
+scrolled = true
+}
+} catch (err) {}
+if (!scrolled) {
+this.stopWaiting()
+this.scrollChatToBottom()
+return
+}
+this.collapseTimer = setTimeout(() => {
+this.collapseTimer = null
+this.stopWaiting()
+}, 350)
+},
+stopWaiting() {
+if (this.collapseTimer) {
+clearTimeout(this.collapseTimer)
+this.collapseTimer = null
+}
+if (this.waitTimer) {
+clearInterval(this.waitTimer)
+this.waitTimer = null
+}
+this.waiting = false
+this.waitPhase = 0
+this.dot1 = ""
+this.dot2 = ""
+this.dot3 = ""
+},
+dismissError() {
+this.errorText = ""
+},
+scrollChatToBottom(instant) {
+setTimeout(() => {
+try {
+const el = this.$element("msgList")
+if (el && typeof el.scrollTo === "function") {
+el.scrollTo({ top: 10000, left: 0, behavior: instant ? "auto" : "smooth" })
+}
+} catch (err) {}
+}, 50)
+}
+}
+.page {
+width: 192px;
+height: 490px;
+background-color: #000000;
+flex-direction: column;
+align-items: center;
+}
+.clock {
+position: absolute;
+left: 0px;
+top: 26px;
+width: 192px;
+text-align: center;
+font-size: 17px;
+font-weight: bold;
+line-height: 24px;
+color: rgba(255, 255, 255, 0.78);
+}
+.title {
+position: absolute;
+left: 0px;
+top: 50px;
+width: 192px;
+text-align: center;
+font-size: 22px;
+font-weight: bold;
+line-height: 28px;
+color: #ffffff;
+lines: 1;
+text-overflow: ellipsis;
+}
+.msg-list {
+position: absolute;
+left: 0px;
+top: 106px;
+width: 192px;
+height: 287px;
+flex-direction: column;
+}
+.list-end {
+width: 192px;
+height: 22px;
+}
+.msg-item {
+width: 192px;
+flex-direction: column;
+padding-bottom: 6px;
+}
+.empty {
+position: absolute;
+left: 0px;
+top: 106px;
+width: 192px;
+height: 286px;
+flex-direction: column;
+align-items: center;
+justify-content: center;
+}
+.empty-title {
+width: 168px;
+text-align: center;
+font-size: 16px;
+font-weight: bold;
+line-height: 22px;
+color: rgba(255, 255, 255, 0.45);
+lines: 1;
+text-overflow: ellipsis;
+}
+.empty-sub {
+width: 168px;
+margin-top: 6px;
+text-align: center;
+font-size: 14px;
+line-height: 20px;
+color: rgba(255, 255, 255, 0.35);
+lines: 1;
+text-overflow: ellipsis;
+}
+.msg-row {
+width: 192px;
+flex-direction: row;
+margin-bottom: 4px;
+}
+.msg-row-ai {
+justify-content: flex-start;
+}
+.msg-row-user {
+justify-content: flex-end;
+}
+.msg-col {
+width: 186px;
+flex-direction: column;
+align-items: flex-start;
+}
+.msg-col-user {
+align-items: flex-end;
+margin-right: 6px;
+}
+.msg-header {
+flex-direction: row;
+align-items: center;
+height: 18px;
+margin-left: 6px;
+margin-bottom: 6px;
+}
+.msg-sender {
+font-size: 13px;
+line-height: 18px;
+color: rgba(255, 255, 255, 0.6);
+}
+.msg-sender-user {
+margin-right: 0px;
+margin-bottom: 6px;
+}
+.msg-sender-ai {
+margin-left: 0px;
+color: #7c93ff;
+}
+.bubble {
+max-width: 180px;
+border-radius: 16px;
+padding-left: 8px;
+padding-right: 8px;
+padding-top: 7px;
+padding-bottom: 7px;
+flex-direction: column;
+}
+.bubble-ai {
+background-color: #262626;
+margin-left: 6px;
+border-bottom-left-radius: 6px;
+}
+.bubble-typing {
+width: 48px;
+height: 26px;
+flex-direction: row;
+align-items: flex-start;
+padding: 0px;
+}
+.typing-dot {
+width: 6px;
+height: 6px;
+border-radius: 3px;
+margin-top: 10px;
+margin-left: 5px;
+background-color: rgba(255, 255, 255, 0.25);
+}
+.typing-dot-1 {
+margin-left: 10px;
+}
+.typing-dot-l1 {
+background-color: rgba(255, 255, 255, 0.35);
+margin-top: 9.5px;
+}
+.typing-dot-l2 {
+background-color: rgba(255, 255, 255, 0.45);
+margin-top: 9px;
+}
+.typing-dot-l3 {
+background-color: rgba(255, 255, 255, 0.6);
+margin-top: 8.5px;
+}
+.typing-dot-l4 {
+background-color: rgba(255, 255, 255, 0.75);
+margin-top: 8px;
+}
+.typing-dot-l5 {
+background-color: rgba(255, 255, 255, 0.9);
+margin-top: 7.5px;
+}
+.typing-dot-l6 {
+background-color: #ffffff;
+margin-top: 7px;
+}
+.bubble-user {
+background-color: #4d6bfe;
+border-bottom-right-radius: 6px;
+}
+.bubble-text {
+font-size: 16px;
+line-height: 22px;
+color: #ffffff;
+word-break: break-all;
+}
+.input-bar {
+position: absolute;
+left: 6px;
+bottom: 59px;
+width: 180px;
+height: 38px;
+background-color: #262626;
+border-radius: 19px;
+border-width: 2px;
+border-color: #333333;
+align-items: center;
+justify-content: flex-start;
+padding-left: 14px;
+padding-right: 12px;
+}
+.input-placeholder {
+width: 154px;
+font-size: 15px;
+font-weight: bold;
+color: rgba(255, 255, 255, 0.5);
+text-align: left;
+lines: 1;
+text-overflow: ellipsis;
+}
+.error-box {
+position: absolute;
+left: 6px;
+bottom: 104px;
+width: 180px;
+max-height: 120px;
+padding-top: 6px;
+padding-bottom: 6px;
+padding-left: 12px;
+padding-right: 10px;
+background-color: #3a1a1a;
+border-radius: 10px;
+border-width: 1px;
+border-color: #8a3a3a;
+}
+.error-text {
+width: 158px;
+font-size: 13px;
+line-height: 17px;
+color: #ffd6d6;
+word-break: break-all;
+}
