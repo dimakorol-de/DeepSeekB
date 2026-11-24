@@ -19,9 +19,11 @@ jobs:
         run: |
           npm install
           npx aiot build
+          echo "=== Ищем RPK файлы ==="
+          find . -maxdepth 4 -name "*.rpk"
       - name: Upload RPK
         uses: actions/upload-artifact@v4
         with:
           name: rpk-build
-          path: dist/*.rpk
+          path: "**/*.rpk"
           if-no-files-found: error
