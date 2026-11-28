@@ -20,16 +20,16 @@ function getFetch() {
   return null
 }
 
-export const API_HOST = "openrouter.ai"
-export const API_PREFIX = "/api/v1"
-export const DEFAULT_MODEL = "deepseek/deepseek-chat:free"
+export const API_HOST = "api.zveno.ai"
+export const API_PREFIX = "/v1"
+export const DEFAULT_MODEL = "baidu/ernie-5.5-flash-preview:free"
 export const REASONER_MODEL = "deepseek/deepseek-r1:free"
 export const DEFAULT_MAX_TOKENS = 1500
 export const DEFAULT_TIMEOUT = 35000
 export const DNS_TIMEOUT = 8000
 
 export const MODEL_LIST = [
-  { id: "deepseek/deepseek-chat:free", title: "DeepSeek Chat (Free)" },
+  { id: "baidu/ernie-5.5-flash-preview:free", title: "Ernie 5.5 Flash (Free)" },
   { id: "deepseek/deepseek-r1:free", title: "DeepSeek R1 (Free)" }
 ]
 
@@ -46,10 +46,9 @@ export function hasDirectFetch() {
 }
 
 const DOH_SERVERS = [
-  { url: "https://cloudflare-dns.com{host}&type=A", json: true },
   { url: "https://yandex.net{host}&type=A", json: false },
-  { url: "https://dns.google{host}&type=A", json: false },
-  { url: "https://1.1.1{host}&type=A", json: true }
+  { url: "https://cloudflare-dns.com{host}&type=A", json: true },
+  { url: "https://dns.google{host}&type=A", json: false }
 ]
 
 function trim(value) {
@@ -83,11 +82,7 @@ export function normalizeResponse(res) {
       body = null
     }
   } else if (typeof data === "object") {
-    if (data.choices || data.error || data.data) {
-      body = data
-    } else {
-      body = data
-    }
+    body = data
   }
 
   if (!status && body && typeof body.code === "number") {
@@ -226,9 +221,7 @@ export function buildPayload(options) {
 function authHeader(options) {
   return {
     "Content-Type": "application/json",
-    "Authorization": "Bearer " + trim(options.apiKey),
-    "HTTP-Referer": "https://github.com",
-    "X-Title": "DeepSeekB"
+    "Authorization": "Bearer " + trim(options.apiKey)
   }
 }
 
@@ -312,9 +305,7 @@ function bridgeRoute(options, path) {
     norm.url = url
     return norm
   })
-}
-
-export function resolveHostIp(host, servers) {
+}export function resolveHostIp(host, servers) {
   const list = servers && servers.length ? servers : DOH_SERVERS
   let chain = Promise.reject(new Error("no resolver"))
 
@@ -356,7 +347,7 @@ export function generateContent(options) {
     return Promise.reject({
       kind: "api",
       text: "Не задан API-ключ",
-      hint: "Откройте настройки и укажите ключ OpenRouter"
+      hint: "Откройте настройки и укажите ключ ZvenoAI"
     })
   }
 
@@ -387,269 +378,288 @@ export function generateContent(options) {
     }
     if (trim(opts.relay)) {
       routes.push(function () {
-return relayRoute(opts, path)
-})
+        return relayRoute(opts, path)
+      })
+    }
+    if (mode === "auto" || mode === "doh") {
+      routes.push(function () {
+        return pinnedRoute(opts, path)
+      })
+    }
+  }
+
+  return new Promise(function (resolve, reject) {
+    runRoutes(routes, 0, null, resolve, reject)
+  })
 }
-if (mode === "auto" || mode === "doh") {
-routes.push(function () {
-return pinnedRoute(opts, path)
-})
-}
-}
-return new Promise(function (resolve, reject) {
-runRoutes(routes, 0, null, resolve, reject)
-})
-}
+
 function runRoutes(routes, index, lastError, resolve, reject) {
-if (index >= routes.length) {
-reject(
-lastError || {
-kind: "network",
-text: "Сеть недоступна",
-hint: "Включите мост через телефон (FetchBridge) в настройках"
+  if (index >= routes.length) {
+    reject(
+      lastError || {
+        kind: "network",
+        text: "Сеть недоступна",
+        hint: "Включите мост через телефон (FetchBridge) в настройках"
+      }
+    )
+    return
+  }
+
+  const routeFn = routes.slice(index, index + 1).pop()
+  routeFn().then(
+    function (norm) {
+      const status = norm.status || 0
+      if (status >= 200 && status < 300) {
+        resolve(norm)
+        return
+      }
+      if (status === 429 || status >= 500) {
+        runRoutes(
+          routes,
+          index + 1,
+          {
+            kind: "api",
+            status: status,
+            body: norm.body,
+            text: norm.text,
+            url: norm.url,
+            route: norm.route
+          },
+          resolve,
+          reject
+        )
+        return
+      }
+      reject({
+        kind: "api",
+        status: status,
+        body: norm.body,
+        text: norm.text,
+        url: norm.url,
+        route: norm.route
+      })
+    },
+    function (err) {
+      runRoutes(
+        routes,
+        index + 1,
+        {
+          kind: "network",
+          code: err && err.code,
+          data: err && err.data,
+          message: err && err.message,
+          route: err && err.route,
+          bridge: !!(err && err.bridge),
+          noFetch: !!(err && err.noFetch)
+        },
+        resolve,
+        reject
+      )
+    }
+  )
 }
-)
-return
-}
-const routeFn = routes.slice(index, index + 1).pop()
-routeFn().then(
-function (norm) {
-const status = norm.status || 0
-if (status >= 200 && status < 300) {
-resolve(norm)
-return
-}
-if (status === 429 || status >= 500) {
-runRoutes(
-routes,
-index + 1,
-{
-kind: "api",
-status: status,
-body: norm.body,
-text: norm.text,
-url: norm.url,
-route: norm.route
-},
-resolve,
-reject
-)
-return
-}
-reject({
-kind: "api",
-status: status,
-body: norm.body,
-text: norm.text,
-url: norm.url,
-route: norm.route
-})
-},
-function (err) {
-runRoutes(
-routes,
-index + 1,
-{
-kind: "network",
-code: err && err.code,
-data: err && err.data,
-message: err && err.message,
-route: err && err.route,
-bridge: !!(err && err.bridge),
-noFetch: !!(err && err.noFetch)
-},
-resolve,
-reject
-)
-}
-)
-}
+
 export function extractText(body) {
-if (!body || !body.choices || !body.choices.length) {
-return ""
+  if (!body || !body.choices || !body.choices.length) {
+    return ""
+  }
+  const choice = body.choices.slice(0, 1).pop()
+  if (!choice || !choice.message) {
+    return ""
+  }
+  let text = String(choice.message.content || "")
+  text = text.replace(/<think>[\s\S]*?<\/think>/gi, "")
+  return trim(text)
 }
-const choice = body.choices.slice(0, 1).pop()
-if (!choice || !choice.message) {
-return ""
-}
-return trim(choice.message.content || "")
-}
+
 function snippet(value, limit) {
-let text = String(value || "")
-text = text
-.replace(/<script[\s\S]?</script>/gi, " ")
-.replace(/<style[\s\S]?</style>/gi, " ")
-.replace(/<[^>]*>/g, " ")
-.replace(/\s+/g, " ")
-.replace(/^\s+|\s+$/g, "")
-if (text.length > limit) {
-text = text.slice(0, limit) + "…"
+  let text = String(value || "")
+  text = text
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^\s+|\s+$/g, "")
+  if (text.length > limit) {
+    text = text.slice(0, limit) + "…"
+  }
+  return text
 }
-return text
-}
+
 export function describeError(err) {
-if (!err) {
-return { text: "Неизвестная ошибка", hint: "" }
+  if (!err) {
+    return { text: "Неизвестная ошибка", hint: "" }
+  }
+  if (err.kind === "api") {
+    const status = err.status || 0
+    let message = ""
+    if (err.body && err.body.error) {
+      if (typeof err.body.error === "string") {
+        message = err.body.error
+      } else if (err.body.error.message) {
+        message = String(err.body.error.message)
+      }
+    }
+    const low = message.toLowerCase()
+
+    if (err.empty) {
+      return {
+        text: "Пустой ответ от нейросети",
+        hint: "Сервер перегружен. Повторите запрос."
+      }
+    }
+    if (status === 401 || low.indexOf("unauthorized") >= 0 || low.indexOf("invalid") >= 0) {
+      return {
+        text: "Неверный API-ключ",
+        hint: "Проверьте ключ ZvenoAI в настройках"
+      }
+    }
+    if (status === 402 || low.indexOf("insufficient") >= 0 || low.indexOf("balance") >= 0) {
+      return {
+        text: "Недостаточно средств",
+        hint: "Пополните баланс на zveno.ai или выключите «Думающий R1»"
+      }
+    }
+    if (status === 403) {
+      const raw = snippet(err.text, 120)
+      return {
+        text: "Доступ запрещён (403)",
+        hint: message || raw || "Проверьте права ключа в личном кабинете ZvenoAI"
+      }
+    }
+    if (status === 404) {
+      return {
+        text: "Модель не найдена",
+        hint: message || "Выключите тумблер «Думающий R1» (оставьте бесплатную модель)"
+      }
+    }
+    if (status === 429) {
+      return {
+        text: "Лимит бесплатных запросов",
+        hint: "Подождите 10-20 секунд и повторите"
+      }
+    }
+    if (status >= 500) {
+      return {
+        text: "Ошибка сервера ZvenoAI",
+        hint: message || "Повторите попытку позже"
+      }
+    }
+    return {
+      text: message || "Ошибка API (" + status + ")",
+      hint: ""
+    }
+  }
+
+  const data = err.data
+  if (err && err.bridge) {
+    return {
+      text: typeof data === "string" && data ? data : "Мост через телефон недоступен",
+      hint: "Откройте AstroBox NG с плагином FetchBridge на телефоне"
+    }
+  }
+  if (err && err.noFetch) {
+    return {
+      text: "Прямой интернет недоступен",
+      hint: "Включите режим «Через телефон» в настройках"
+    }
+  }
+  let text = "Сеть недоступна"
+  if (typeof data === "string" && data) {
+    text =
+      data === "timeout"
+        ? "Превышено время ожидания"
+        : data.indexOf("resolve") >= 0 || data.indexOf("host") >= 0
+          ? "Не удалось найти сервер"
+          : data
+  }
+  return {
+    text: text,
+    hint: "Проверьте подключение к телефону и плагин FetchBridge"
+  }
 }
-if (err.kind === "api") {
-const status = err.status || 0
-let message = ""
-if (err.body && err.body.error && err.body.error.message) {
-message = String(err.body.error.message)
-}
-const low = message.toLowerCase()
-if (err.empty) {
-return {
-text: "Пустой ответ от DeepSeek",
-hint: "Бесплатный сервер перегружен. Повторите запрос."
-}
-}
-if (status === 401 || low.indexOf("authentication") >= 0 || low.indexOf("invalid") >= 0) {
-return {
-text: "Неверный API-ключ",
-hint: "Проверьте ключ (начинается с sk-or-v1-...) в настройках"
-}
-}
-if (status === 402 || low.indexOf("insufficient") >= 0 || low.indexOf("credits") >= 0) {
-return {
-text: "Нет кредитов на ключе",
-hint: "Проверьте бесплатный лимит на openrouter.ai"
-}
-}
-if (status === 403) {
-const raw = snippet(err.text, 120)
-return {
-text: "Доступ запрещён (403)",
-hint: message || raw || "Проверьте настройки ключа OpenRouter"
-}
-}
-if (status === 404) {
-return {
-text: "Модель не найдена",
-hint: message || "Проверьте настройки модели"
-}
-}
-if (status === 429) {
-return {
-text: "Лимит бесплатных запросов",
-hint: "Подождите 10-20 секунд и повторите"
-}
-}
-if (status >= 500) {
-return {
-text: "Ошибка сервера OpenRouter",
-hint: message || "Повторите попытку позже"
-}
-}
-return {
-text: message || "Ошибка API (" + status + ")",
-hint: ""
-}
-}
-const data = err.data
-if (err && err.bridge) {
-return {
-text: typeof data === "string" && data ? data : "Мост через телефон недоступен",
-hint: "Откройте AstroBox NG с плагином FetchBridge на телефоне"
-}
-}
-if (err && err.noFetch) {
-return {
-text: "Прямой интернет недоступен",
-hint: "Включите режим «Через телефон» в настройках"
-}
-}
-let text = "Сеть недоступна"
-if (typeof data === "string" && data) {
-text =
-data === "timeout"
-? "Превышено время ожидания"
-: data.indexOf("resolve") >= 0 || data.indexOf("host") >= 0
-? "Не удалось найти сервер"
-: data
-}
-return {
-text: text,
-hint: "Проверьте подключение к телефону и плагин FetchBridge"
-}
-}
+
 export function apiDiagnose(options) {
-const opts = options || {}
-const apiKey = trim(opts.apiKey)
-if (!apiKey) {
-return Promise.resolve({
-ok: false,
-status: 0,
-route: "",
-url: "",
-text: "Не задан API-ключ",
-hint: "Откройте настройки и укажите ключ OpenRouter"
-})
+  const opts = options || {}
+  const apiKey = trim(opts.apiKey)
+  if (!apiKey) {
+    return Promise.resolve({
+      ok: false,
+      status: 0,
+      route: "",
+      url: "",
+      text: "Не задан API-ключ",
+      hint: "Откройте настройки и укажите ключ ZvenoAI"
+    })
+  }
+
+  const url = "https://" + API_HOST + API_PREFIX + "/models"
+
+  return bridgeFetch({
+    url: url,
+    method: "GET",
+    header: {
+      "Authorization": "Bearer " + apiKey,
+      "Accept": "application/json"
+    },
+    responseType: "json",
+    timeout: opts.timeout || 15000
+  }).then(
+    function (res) {
+      const norm = normalizeResponse(res)
+      const ok = norm.status >= 200 && norm.status < 300
+      const d = ok
+        ? { text: "Ключ ZvenoAI работает!", hint: "" }
+        : describeError({
+            kind: "api",
+            status: norm.status,
+            body: norm.body,
+            text: norm.text,
+            url: url
+          })
+      return {
+        ok: ok,
+        status: norm.status,
+        route: "bridge",
+        url: url,
+        text: d.text,
+        hint: d.hint
+      }
+    },
+    function (err) {
+      const d = describeError({
+        kind: "network",
+        data: err && err.data,
+        bridge: !!(err && err.bridge),
+        noFetch: !!(err && err.noFetch)
+      })
+      return {
+        ok: false,
+        status: 0,
+        route: "bridge",
+        url: url,
+        text: d.text,
+        hint: d.hint
+      }
+    }
+  )
 }
-const url = "https://" + API_HOST + API_PREFIX + "/auth/key"
-return bridgeFetch({
-url: url,
-method: "GET",
-header: {
-"Authorization": "Bearer " + apiKey,
-"Accept": "application/json"
-},
-responseType: "json",
-timeout: opts.timeout || 15000
-}).then(
-function (res) {
-const norm = normalizeResponse(res)
-const ok = norm.status >= 200 && norm.status < 300
-const d = ok
-? { text: "Ключ OpenRouter работает!", hint: "" }
-: describeError({
-kind: "api",
-status: norm.status,
-body: norm.body,
-text: norm.text,
-url: url
-})
-return {
-ok: ok,
-status: norm.status,
-route: "bridge",
-url: url,
-text: d.text,
-hint: d.hint
-}
-},
-function (err) {
-const d = describeError({
-kind: "network",
-data: err && err.data,
-bridge: !!(err && err.bridge),
-noFetch: !!(err && err.noFetch)
-})
-return {
-ok: false,
-status: 0,
-route: "bridge",
-url: url,
-text: d.text,
-hint: d.hint
-}
-}
-)
-}
+
 export default {
-API_HOST,
-DEFAULT_MODEL,
-REASONER_MODEL,
-DEFAULT_MAX_TOKENS,
-DEFAULT_TIMEOUT,
-DNS_TIMEOUT,
-MODEL_LIST,
-NETWORK_MODES,
-normalizeResponse,
-buildPayload,
-generateContent,
-extractText,
-describeError,
-apiDiagnose,
-resolveHostIp
+  API_HOST,
+  DEFAULT_MODEL,
+  REASONER_MODEL,
+  DEFAULT_MAX_TOKENS,
+  DEFAULT_TIMEOUT,
+  DNS_TIMEOUT,
+  MODEL_LIST,
+  NETWORK_MODES,
+  normalizeResponse,
+  buildPayload,
+  generateContent,
+  extractText,
+  describeError,
+  apiDiagnose,
+  resolveHostIp
 }
+
