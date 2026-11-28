@@ -5,8 +5,8 @@
     <text class="clock">{{ clock }}</text>
     <text class="title">Настройки</text>
 
-    <list class="list">
-      <list-item class="entry" type="item" for="{{ items }}">
+    <scroll class="list" scroll-y="true">
+      <div class="entry" for="{{ items }}">
         <text if="{{ $item.kind === 'section' }}" class="section">{{ $item.label }}</text>
         <div if="{{ $item.kind === 'row' }}" class="item" onclick="onItemClick($idx)">
           <div class="card">
@@ -21,19 +21,19 @@
             </div>
           </div>
         </div>
-      </list-item>
-      <list-item class="item-pad" type="pad"></list-item>
-    </list>
+      </div>
+      <div class="item-pad"></div>
+    </scroll>
 
     <div if="{{ clearShow }}" class="mask">
       <div class="dialog">
         <div class="dialog-btn dialog-btn-cancel" onclick="cancelClear">
-          <text class="dialog-sym">✕</text>
+          <text class="dialog-sym">Отмена</text>
         </div>
         <text class="dialog-title">Удалить все диалоги?</text>
         <text class="dialog-sub">Вся история сообщений будет стёрта</text>
         <div class="dialog-btn dialog-btn-delete" onclick="confirmClear">
-          <text class="dialog-sym dialog-sym-del">🗑</text>
+          <text class="dialog-sym dialog-sym-del">Удалить</text>
         </div>
       </div>
     </div>
@@ -41,8 +41,10 @@
     <div if="{{ diagShow }}" class="mask">
       <div class="diag-dialog">
         <scroll class="diag-scroll" scroll-y="true">
-          <text class="diag-title">Проверка API</text>
-          <text class="diag-text">{{ diagText }}</text>
+          <div class="diag-inner">
+            <text class="diag-title">Проверка API</text>
+            <text class="diag-text">{{ diagText }}</text>
+          </div>
         </scroll>
         <div class="diag-btn" onclick="closeDiag">
           <text class="diag-btn-text">Закрыть</text>
@@ -404,6 +406,7 @@ export default {
   top: 88px;
   width: 192px;
   height: 392px;
+  flex-direction: column;
 }
 
 .entry {
@@ -424,18 +427,19 @@ export default {
 .item {
   width: 192px;
   height: 80px;
+  flex-direction: row;
+  align-items: center;
   justify-content: center;
 }
 
 .item-pad {
   width: 192px;
-  height: 20px;
+  height: 24px;
 }
 
 .card {
   width: 168px;
   height: 70px;
-  margin-left: 12px;
   padding-left: 14px;
   padding-right: 12px;
   background-color: #262626;
@@ -526,9 +530,9 @@ export default {
 }
 
 .dialog-btn {
-  width: 48px;
-  height: 48px;
-  border-radius: 24px;
+  width: 116px;
+  height: 40px;
+  border-radius: 20px;
   border-width: 2px;
   border-style: solid;
   align-items: center;
@@ -545,7 +549,7 @@ export default {
 }
 
 .dialog-sym {
-  font-size: 20px;
+  font-size: 14px;
   font-weight: bold;
   color: #ffffff;
 }
@@ -556,30 +560,42 @@ export default {
 
 .diag-dialog {
   width: 176px;
-  height: 290px;
+  height: 310px;
   background-color: #262626;
   border-radius: 20px;
   flex-direction: column;
   align-items: center;
-  padding: 12px;
+  justify-content: space-between;
+  padding: 14px 10px;
 }
 
 .diag-scroll {
-  width: 152px;
-  height: 210px;
+  width: 156px;
+  height: 220px;
+  flex-direction: column;
+}
+
+.diag-inner {
+  width: 156px;
+  flex-direction: column;
+  align-items: center;
 }
 
 .diag-title {
+  width: 156px;
   text-align: center;
-  font-size: 17px;
+  font-size: 16px;
   font-weight: bold;
   color: #ffffff;
 }
 
 .diag-text {
+  width: 156px;
   margin-top: 8px;
   font-size: 13px;
+  line-height: 18px;
   color: #ffffff;
+  word-break: break-all;
 }
 
 .diag-btn {
