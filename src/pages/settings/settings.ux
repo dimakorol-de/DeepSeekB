@@ -28,12 +28,12 @@
     <div if="{{ clearShow }}" class="mask">
       <div class="dialog">
         <div class="dialog-btn dialog-btn-cancel" onclick="cancelClear">
-          <image class="dialog-btn-icon" src="/common/images/arrow.png"></image>
+          <text class="dialog-sym">✕</text>
         </div>
         <text class="dialog-title">Удалить все диалоги?</text>
         <text class="dialog-sub">Вся история сообщений будет стёрта</text>
         <div class="dialog-btn dialog-btn-delete" onclick="confirmClear">
-          <image class="dialog-btn-icon dialog-btn-icon-delete" src="/common/images/trash.png"></image>
+          <text class="dialog-sym dialog-sym-del">🗑</text>
         </div>
       </div>
     </div>
@@ -544,14 +544,14 @@ export default {
   border-color: #ff5050;
 }
 
-.dialog-btn-icon {
-  width: 28px;
-  height: 28px;
+.dialog-sym {
+  font-size: 20px;
+  font-weight: bold;
+  color: #ffffff;
 }
 
-.dialog-btn-icon-delete {
-  width: 32px;
-  height: 32px;
+.dialog-sym-del {
+  color: #ff5050;
 }
 
 .diag-dialog {
