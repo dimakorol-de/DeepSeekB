@@ -6,23 +6,64 @@
     <text class="title">Настройки</text>
 
     <scroll class="list" scroll-y="true">
-      <div class="entry" for="{{ items }}">
-        <text if="{{ $item.kind === 'section' }}" class="section">{{ $item.label }}</text>
-        <div if="{{ $item.kind === 'row' }}" class="item" onclick="onItemClick($idx)">
-          <div class="card">
-            <div class="card-main">
-              <text class="card-label">{{ $item.label }}</text>
-              <text if="{{ $item.value }}" class="card-value">{{ $item.value }}</text>
-            </div>
-            <div
-              if="{{ $item.id === 'auto' }}"
-              class="switch {{ autoDelete ? 'switch-on' : 'switch-off' }}">
-              <div class="switch-knob"></div>
-            </div>
+      <div class="inner">
+        <text class="section">API</text>
+
+        <div class="card" onclick="openApiKey">
+          <div class="card-main">
+            <text class="card-label">API-ключ</text>
+            <text class="card-value">{{ apiLabel }}</text>
           </div>
         </div>
+
+        <div class="card" onclick="checkApi">
+          <div class="card-main">
+            <text class="card-label">Проверить API</text>
+            <text class="card-value">Нажмите</text>
+          </div>
+        </div>
+
+        <div class="card" onclick="cycleThinking">
+          <div class="card-main">
+            <text class="card-label">Думающий R1</text>
+            <text class="card-value">{{ thinkingMode === 'on' ? 'Вкл' : 'Выкл' }}</text>
+          </div>
+        </div>
+
+        <text class="section">Сеть</text>
+
+        <div class="card" onclick="cycleNetwork">
+          <div class="card-main">
+            <text class="card-label">Режим сети</text>
+            <text class="card-value">{{ netLabel }}</text>
+          </div>
+        </div>
+
+        <div class="card" onclick="checkBridge">
+          <div class="card-main">
+            <text class="card-label">Мост FetchBridge</text>
+            <text class="card-value">{{ bridgeStatus }}</text>
+          </div>
+        </div>
+
+        <text class="section">Чаты</text>
+
+        <div class="card" onclick="toggleAutoDelete">
+          <div class="card-main">
+            <text class="card-label">Автоудаление</text>
+            <text class="card-value">{{ autoDelete ? '3 дня' : 'Выкл' }}</text>
+          </div>
+        </div>
+
+        <div class="card" onclick="askClear">
+          <div class="card-main">
+            <text class="card-label">Очистить чаты</text>
+            <text class="card-value">Удалить</text>
+          </div>
+        </div>
+
+        <div class="item-pad"></div>
       </div>
-      <div class="item-pad"></div>
     </scroll>
 
     <div if="{{ clearShow }}" class="mask">
@@ -79,14 +120,15 @@ import {
   cleanupInactiveChats,
   clearAllChats
 } from "../../common/app-store.js"
-import { NETWORK_MODES, apiDiagnose, DEFAULT_MODEL, REASONER_MODEL } from "../../common/deepseek-api.js"
+import { apiDiagnose, DEFAULT_MODEL, REASONER_MODEL } from "../../common/deepseek-api.js"
 import { bridgeSupported, bridgeDiagnose, bridgePing, bridgeReady } from "../../common/bridge.js"
 
 export default {
   private: {
     clock: "",
-    items: [],
     apiKey: "",
+    apiLabel: "Не задан",
+    netLabel: "Авто",
     autoDelete: false,
     clearShow: false,
     diagShow: false,
@@ -105,7 +147,6 @@ export default {
     this.timer = setInterval(() => {
       this.tick()
     }, 20000)
-    this.refreshItems()
     this.loadSettings()
   },
 
@@ -131,76 +172,39 @@ export default {
   loadSettings() {
     getValue(KEY_API_KEY, "", (value) => {
       this.apiKey = value || ""
-      this.refreshItems()
+      this.updateLabels()
     })
     getValue(KEY_AUTO_DELETE, "off", (value) => {
       this.autoDelete = value === "on"
-      this.refreshItems()
     })
     getValue(KEY_NETWORK_MODE, "auto", (value) => {
       this.networkMode = value || "auto"
       this.refreshBridge()
-      this.refreshItems()
+      this.updateLabels()
     })
     getValue(KEY_THINKING_MODE, "off", (value) => {
       this.thinkingMode = value || "off"
-      this.refreshItems()
     })
   },
 
-  refreshItems() {
-    let apiValue = "Не задан"
+  updateLabels() {
     if (this.apiKey) {
-      apiValue = this.apiKey.length > 8 ? "…" + this.apiKey.slice(-4) : "Задан"
+      this.apiLabel = this.apiKey.length > 8 ? "…" + this.apiKey.slice(-4) : "Задан"
+    } else {
+      this.apiLabel = "Не задан"
     }
-    const net = this.networkMode || "auto"
-    let netLabel = "Авто"
-    for (let i = 0; i < NETWORK_MODES.length; i++) {
-      const m = NETWORK_MODES.slice(i, i + 1).pop()
-      if (m && m.id === net) {
-        netLabel = m.title
-        break
-      }
+    const map = {
+      auto: "Авто",
+      bridge: "Через телефон",
+      direct: "Напрямую",
+      doh: "DNS через DoH",
+      relay: "Свой прокси"
     }
-    this.items = [
-      { kind: "section", label: "API" },
-      { kind: "row", id: "api", label: "API-ключ", value: apiValue },
-      { kind: "row", id: "check", label: "Проверить API", value: "Нажмите" },
-      { kind: "row", id: "thinking", label: "Думающий R1", value: this.thinkingMode === "on" ? "Вкл" : "Выкл" },
-      { kind: "section", label: "Сеть" },
-      { kind: "row", id: "net", label: "Режим сети", value: netLabel },
-      { kind: "row", id: "bridge", label: "Мост FetchBridge", value: this.bridgeStatus },
-      { kind: "section", label: "Чаты" },
-      { kind: "row", id: "auto", label: "Автоудаление", value: this.autoDelete ? "3 дня" : "Выкл" },
-      { kind: "row", id: "clear", label: "Очистить чаты", value: "Удалить" }
-    ]
-  },
-
-  onItemClick($idx) {
-    const item = this.items.slice($idx, $idx + 1).pop()
-    if (!item || item.kind !== "row") {
-      return
-    }
-    if (item.id === "api") {
-      this.openApiKey()
-    } else if (item.id === "check") {
-      this.checkApi()
-    } else if (item.id === "thinking") {
-      this.cycleThinking()
-    } else if (item.id === "net") {
-      this.cycleNetwork()
-    } else if (item.id === "bridge") {
-      this.checkBridge()
-    } else if (item.id === "auto") {
-      this.toggleAutoDelete()
-    } else if (item.id === "clear") {
-      this.clearShow = true
-    }
+    this.netLabel = map[this.networkMode] || "Авто"
   },  cycleThinking() {
     this.thinkingMode = this.thinkingMode === "on" ? "off" : "on"
     setValue(KEY_THINKING_MODE, this.thinkingMode)
     setValue(KEY_MODEL, this.thinkingMode === "on" ? REASONER_MODEL : DEFAULT_MODEL)
-    this.refreshItems()
   },
 
   cycleNetwork() {
@@ -211,7 +215,7 @@ export default {
     this.networkMode = order.slice(nextIndex, nextIndex + 1).pop()
     setValue(KEY_NETWORK_MODE, this.networkMode)
     this.refreshBridge()
-    this.refreshItems()
+    this.updateLabels()
   },
 
   checkApi() {
@@ -259,11 +263,9 @@ export default {
   checkBridge() {
     if (!bridgeSupported()) {
       this.bridgeStatus = "не поддерживается"
-      this.refreshItems()
       return
     }
     this.bridgeStatus = "поиск..."
-    this.refreshItems()
     try {
       bridgePing()
     } catch (e) {}
@@ -272,7 +274,6 @@ export default {
       try {
         if (bridgeReady()) {
           self.bridgeStatus = "готов к работе"
-          self.refreshItems()
           return
         }
       } catch (e) {}
@@ -285,11 +286,9 @@ export default {
           } else {
             self.bridgeStatus = "нет соединения"
           }
-          self.refreshItems()
         })
         .catch(function () {
           self.bridgeStatus = "ошибка"
-          self.refreshItems()
         })
     }, 700)
   },
@@ -331,7 +330,7 @@ export default {
     if (!key) {
       removeValue(KEY_API_KEY, () => {
         this.apiKey = ""
-        this.refreshItems()
+        this.updateLabels()
       })
       return
     }
@@ -340,7 +339,7 @@ export default {
       if (ok) {
         this.apiKey = key
       }
-      this.refreshItems()
+      this.updateLabels()
     })
   },
 
@@ -348,10 +347,13 @@ export default {
     const next = !this.autoDelete
     this.autoDelete = next
     setValue(KEY_AUTO_DELETE, next ? "on" : "off")
-    this.refreshItems()
     if (next) {
       cleanupInactiveChats(function () {}, AUTO_DELETE_DAYS)
     }
+  },
+
+  askClear() {
+    this.clearShow = true
   },
 
   cancelClear() {
@@ -360,9 +362,7 @@ export default {
 
   confirmClear() {
     this.clearShow = false
-    clearAllChats(() => {
-      this.refreshItems()
-    })
+    clearAllChats(() => {})
   }
 }
 </script>
@@ -409,44 +409,33 @@ export default {
   flex-direction: column;
 }
 
-.entry {
+.inner {
   width: 192px;
   flex-direction: column;
+  align-items: center;
 }
 
 .section {
-  width: 192px;
+  width: 168px;
   height: 28px;
-  padding-left: 20px;
+  margin-top: 4px;
+  padding-left: 8px;
   font-size: 13px;
   font-weight: bold;
   line-height: 28px;
   color: rgba(255, 255, 255, 0.45);
 }
 
-.item {
-  width: 192px;
-  height: 80px;
-  flex-direction: row;
-  align-items: center;
-  justify-content: center;
-}
-
-.item-pad {
-  width: 192px;
-  height: 24px;
-}
-
 .card {
   width: 168px;
-  height: 70px;
+  height: 68px;
+  margin-bottom: 10px;
   padding-left: 14px;
   padding-right: 12px;
   background-color: #262626;
   border-radius: 20px;
   flex-direction: row;
   align-items: center;
-  justify-content: space-between;
 }
 
 .card-main {
@@ -468,30 +457,9 @@ export default {
   color: #4d6bfe;
 }
 
-.switch {
-  width: 48px;
-  height: 28px;
-  border-radius: 14px;
-  padding-left: 3px;
-  padding-right: 3px;
-  align-items: center;
-}
-
-.switch-on {
-  background-color: #4d6bfe;
-  justify-content: flex-end;
-}
-
-.switch-off {
-  background-color: #3a3a3a;
-  justify-content: flex-start;
-}
-
-.switch-knob {
-  width: 22px;
-  height: 22px;
-  border-radius: 11px;
-  background-color: #ffffff;
+.item-pad {
+  width: 192px;
+  height: 30px;
 }
 
 .mask {
