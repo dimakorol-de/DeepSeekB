@@ -20,7 +20,7 @@ function getFetch() {
   return null
 }
 
-export const API_HOST = "api.zveno.ai"
+export const API_HOST = "://zvenoai.com"
 export const API_PREFIX = "/v1"
 export const DEFAULT_MODEL = "baidu/ernie-5.5-flash-preview:free"
 export const REASONER_MODEL = "deepseek/deepseek-r1:free"
