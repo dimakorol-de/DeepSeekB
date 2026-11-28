@@ -8,7 +8,7 @@
         <text class="btn-sym">+</text>
       </div>
       <div class="btn btn-secondary" onclick="openSettings">
-        <text class="btn-sym">⚙</text>
+        <text class="btn-sub-t">Настр.</text>
       </div>
     </div>
 
@@ -31,7 +31,6 @@
     </list>
 
     <div if="{{ chatsLoaded && chats.length === 0 }}" class="empty">
-      <text class="empty-ico">💬</text>
       <text class="empty-title">Здесь пока пусто</text>
       <text class="empty-sub">Нажмите + сверху</text>
     </div>
@@ -39,12 +38,12 @@
     <div if="{{ delShow }}" class="mask">
       <div class="dialog">
         <div class="dialog-btn dialog-btn-cancel" onclick="cancelDelete">
-          <text class="dialog-sym">✕</text>
+          <text class="dialog-btn-t">Назад</text>
         </div>
         <text class="dialog-title">Удалить диалог?</text>
         <text class="dialog-sub">{{ delTitle }}</text>
         <div class="dialog-btn dialog-btn-delete" onclick="confirmDelete">
-          <text class="dialog-sym dialog-sym-del">🗑</text>
+          <text class="dialog-btn-t dialog-del-t">Удалить</text>
         </div>
       </div>
     </div>
@@ -321,6 +320,13 @@ export default {
   text-align: center;
 }
 
+.btn-sub-t {
+  font-size: 15px;
+  font-weight: bold;
+  color: #ffffff;
+  text-align: center;
+}
+
 .list {
   position: absolute;
   left: 0px;
@@ -338,11 +344,6 @@ export default {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-}
-
-.empty-ico {
-  font-size: 40px;
-  margin-bottom: 8px;
 }
 
 .empty-title {
@@ -437,9 +438,9 @@ export default {
 }
 
 .dialog-btn {
-  width: 48px;
-  height: 48px;
-  border-radius: 24px;
+  width: 116px;
+  height: 40px;
+  border-radius: 20px;
   background-color: rgba(255, 255, 255, 0.08);
   border-width: 2px;
   border-style: solid;
@@ -456,13 +457,13 @@ export default {
   border-color: #ff5050;
 }
 
-.dialog-sym {
-  font-size: 20px;
+.dialog-btn-t {
+  font-size: 14px;
   font-weight: bold;
   color: #ffffff;
 }
 
-.dialog-sym-del {
+.dialog-del-t {
   color: #ff5050;
 }
 
@@ -470,7 +471,7 @@ export default {
   width: 144px;
   margin-top: 12px;
   text-align: center;
-  font-size: 18px;
+  font-size: 17px;
   font-weight: bold;
   color: #ffffff;
 }
