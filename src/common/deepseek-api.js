@@ -199,9 +199,9 @@ export function buildPayload(options) {
     })
   }
 
-  let selectedModel = DEFAULT_MODEL
+  let selectedModel = "baidu/ernie-5.5-flash-preview:free"
   if (opts.thinking === "on" || opts.thinking === "high" || opts.thinking === "reasoner") {
-    selectedModel = REASONER_MODEL
+    selectedModel = "deepseek/deepseek-r1:free"
   }
 
   const payload = {
@@ -211,7 +211,7 @@ export function buildPayload(options) {
     stream: false
   }
 
-  if (selectedModel !== REASONER_MODEL) {
+  if (selectedModel !== "deepseek/deepseek-r1:free") {
     payload.temperature = 0.7
   }
 
@@ -226,7 +226,7 @@ function authHeader(options) {
 }
 
 function directRoute(options, path) {
-  const url = "https://" + API_HOST + API_PREFIX + path
+  const url = "https://://zvenoai.com/v1" + path
   const sslVerify = options.sslVerify !== false
 
   return httpRequest(url, {
@@ -249,7 +249,7 @@ function relayRoute(options, path) {
   if (!base) {
     return Promise.reject({ code: -1, data: "relay is not set", network: true })
   }
-  const url = joinBase(base, API_PREFIX + path)
+  const url = joinBase(base, "/v1" + path)
 
   return httpRequest(url, {
     method: "POST",
@@ -267,11 +267,11 @@ function relayRoute(options, path) {
 }
 
 function pinnedRoute(options, path) {
-  return resolveHostIp(API_HOST, options.dohServers).then(function (ip) {
-    const url = "https://" + ip + API_PREFIX + path
-    const displayUrl = "https://" + API_HOST + API_PREFIX + path
+  return resolveHostIp("://zvenoai.com", options.dohServers).then(function (ip) {
+    const url = "https://" + ip + "/v1" + path
+    const displayUrl = "https://://zvenoai.com/v1" + path
     const header = authHeader(options)
-    header["Host"] = API_HOST
+    header["Host"] = "://zvenoai.com"
 
     return httpRequest(url, {
       method: "POST",
@@ -290,7 +290,7 @@ function pinnedRoute(options, path) {
 }
 
 function bridgeRoute(options, path) {
-  const url = "https://" + API_HOST + API_PREFIX + path
+  const url = "https://://zvenoai.com/v1" + path
 
   return bridgeFetch({
     url: url,
@@ -304,8 +304,7 @@ function bridgeRoute(options, path) {
     norm.route = "bridge"
     norm.url = url
     return norm
-  })
-}export function resolveHostIp(host, servers) {
+  })export function resolveHostIp(host, servers) {
   const list = servers && servers.length ? servers : DOH_SERVERS
   let chain = Promise.reject(new Error("no resolver"))
 
@@ -593,7 +592,7 @@ export function apiDiagnose(options) {
     })
   }
 
-  const url = "https://" + API_HOST + API_PREFIX + "/models"
+  const url = "https://zvenoai.com"
 
   return bridgeFetch({
     url: url,
@@ -663,3 +662,4 @@ export default {
   resolveHostIp
 }
 
+}
